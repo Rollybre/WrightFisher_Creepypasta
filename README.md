@@ -1,5 +1,3 @@
-# CultureLab — Article
-
 Code, data, and article source for the paper on fandom data and Wright-Fisher models.
 
 ## Structure
