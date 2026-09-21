@@ -53,7 +53,7 @@ jupyter notebook code/wf.ipynb
 |   |   |   |   |
 |---|---|---|---|
 | KS  |   |   |   |
-|  MLE |   |   |   |
-|  Diversité ||   |   |
-|entropy|||||
+| MLE |   |   |   |
+|Nombre de Hill (Shanon en plus ?)(diversité intra)   ||   |   |
+|Gini (richesse intra) |||||
 |tx de remplacement (topx)||||
