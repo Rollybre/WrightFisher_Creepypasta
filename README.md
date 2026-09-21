@@ -29,3 +29,31 @@ python code/analysis_stats.py
 # Jupyter notebooks
 jupyter notebook code/wf.ipynb
 ```
+
+
+
+##  Parameters 
+
+
+|  Parameters | Description   | Value  |   |   |
+|---|---|---|---|---|
+|  $N$| Nombre de classe  |  40 |   |   |
+|  $n_i$ | Population initiale  |  1000 |   |   |
+|  $n_f$ |   Population finale| 2000  |   |   |
+|  $T$ | Nombre de génération  | 1000  |   |   |
+|  $t$| Fenêtre d'analyse  |  [0;300] |   |   |
+|  $\alpha$ | Taux d'archivage  | 0.05  |   |   |
+|  (new)$b$ |Conformité (vs proba génération précédente) |[0;1]   |   |   |
+|  (new)$c$ | Le contenu (à voir)  |   |   |   |
+
+
+
+## Descriptive Stats
+
+|   |   |   |   |
+|---|---|---|---|
+| KS  |   |   |   |
+|  MLE |   |   |   |
+|  Diversité ||   |   |
+|entropy|||||
+|tx de remplacement (topx)||||
