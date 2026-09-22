@@ -4,7 +4,7 @@ grille pour de vrai : mesure (1) le temps d'un run seul à l'échelle papier, et
 --n_jobs sur run_param_grid.py, POUR CETTE MACHINE (nb de cœurs et charge peuvent différer de la
 machine de dev).
 
-Usage :
+Usage (depuis code/hpc/) :
     python benchmark.py
     python benchmark.py --runs_per_job 20 --max_jobs 16
 """
@@ -12,13 +12,17 @@ Usage :
 import argparse
 import os
 import platform
+import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+# simulation.py vit dans code/, un niveau au-dessus de code/hpc/
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from simulation import run_simulation, DATA_PATH
-from run_param_grid import run_grid
+from run_param_grid import run_grid   # même dossier (code/hpc/), import direct
 
 
 # ============================================================================

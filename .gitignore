@@ -15,8 +15,9 @@ __pycache__/
 *.synctex.gz
 
 # Sorties de simulation générées (reproductibles depuis le code, pas versionnées)
-code/*.csv
-code/*.png
+# ** pour couvrir aussi code/hpc/ (où atterrissent la plupart des sorties de grille)
+code/**/*.csv
+code/**/*.png
 code/todo.txt
 outputs/
 results_fine_grid.csv

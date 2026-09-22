@@ -6,7 +6,7 @@
 # simulation.py avec ces paramètres -> écrit son propre fichier JSON (-o).
 # Aucun fichier partagé entre tâches : pas de risque de collision d'écriture.
 #
-# Préparation avant soumission :
+# Préparation avant soumission (depuis code/hpc/) :
 #   python build_param_grid.py --archive_rates 0.01 0.05 0.1 0.2 0.4 --n_seeds 5
 #   qsub -t 1-25 submit_array.sh      # 25 = nb de lignes de params.csv (sans le header)
 # ============================================================================
@@ -32,7 +32,8 @@ module load python3/3.11
 
 PARAMS_FILE="params.csv"
 OUTPUT_DIR="results/"
-CODE_DIR="$(dirname "$0")"
+# simulation.py vit dans code/, un niveau au-dessus de code/hpc/ (où est ce script)
+SIM_SCRIPT="$(dirname "$0")/../simulation.py"
 
 # Ligne 1 = header -> la tâche $SGE_TASK_ID lit la ligne $SGE_TASK_ID+1
 # Colonnes de params.csv (build_param_grid.py) : n_classes,initial_pop,final_pop,generations,
@@ -43,7 +44,7 @@ IFS=',' read -r N_CLASSES INITIAL_POP FINAL_POP GENERATIONS ARCHIVE_RATE CONFORM
 
 echo "Task $SGE_TASK_ID : n_classes=$N_CLASSES archive_rate=$ARCHIVE_RATE conformity_bias=$CONFORMITY_BIAS seed=$SEED"
 
-python "$CODE_DIR/simulation.py" \
+python "$SIM_SCRIPT" \
     -N "$N_CLASSES" -ni "$INITIAL_POP" -nf "$FINAL_POP" \
     -T "$GENERATIONS" -alpha "$ARCHIVE_RATE" -q "$CONFORMITY_BIAS" -s "$SEED" \
     -o "$OUTPUT_DIR"

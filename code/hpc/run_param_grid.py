@@ -12,20 +12,25 @@ réutilise un seul rng séquentiel, donc pas parallélisable tel quel) :
   fait qu'un run de cette grille en local ou soumis sur le HPC (submit_array.sh, même ligne de
   params.csv) est strictement reproductible à l'identique.
 
-Usage :
+Usage (depuis code/hpc/) :
     python build_param_grid.py --archive_rates 0.01 0.02 ... --n_seeds 50 -o params.csv
     python run_param_grid.py params.csv -o results.csv --n_jobs 8 --plot sweep_fine.png
     # (la même params.csv peut aussi être soumise sur HPC via : qsub -t 1-N submit_array.sh)
 """
 
 import argparse
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+# simulation.py vit dans code/, un niveau au-dessus de code/hpc/ -> il faut l'ajouter au path
+# avant de pouvoir l'importer (sinon Python ne le trouve pas depuis ce sous-dossier)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from simulation import (
     run_simulation, frequencies_from_archive, compute_diversity_metrics,
     load_empirical_data, plot_sweep_metrics, plot_grid_heatmap, DATA_PATH,
