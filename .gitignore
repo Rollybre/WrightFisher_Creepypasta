@@ -13,3 +13,11 @@ __pycache__/
 *.snm
 *.toc
 *.synctex.gz
+
+# Sorties de simulation générées (reproductibles depuis le code, pas versionnées)
+code/*.csv
+code/*.png
+code/todo.txt
+outputs/
+results_fine_grid.csv
+sweep_fine.png
