@@ -41,16 +41,28 @@ def build_arg_parser():
                          help="Nb de seeds indépendantes par combinaison (répétitions)")
     parser.add_argument('--seed_start', type=int, default=1,
                          help="Première seed utilisée (les suivantes s'incrémentent de 1)")
+    parser.add_argument('--distribution', choices=['power_law', 'uniform', 'random', 'custom'],
+                         default='power_law',
+                         help="Forme de la distribution initiale, fixe pour toute la grille "
+                              "(défaut : power_law, comportement historique). Cf. "
+                              "simulation.initial_distribution pour le détail des 4 choix.")
+    parser.add_argument('--distribution_path', default='',
+                         help="Chemin d'un CSV de proportions/comptes personnalisés, requis avec "
+                              "--distribution custom (même fichier pour toutes les lignes de la grille)")
     parser.add_argument('-o', '--output', default='params.csv')
     return parser
 
 
 def main():
     args = build_arg_parser().parse_args()
+    if args.distribution == "custom" and not args.distribution_path:
+        raise SystemExit("--distribution custom nécessite --distribution_path")
 
     # Grille complète : produit cartésien archive_rate x conformity_bias x seed. Avec les valeurs
     # par défaut (une seule archive_rate ou une seule conformity_bias), ça revient à un sweep 1D
     # sur l'axe qu'on a effectivement fait varier -- même mécanisme, généralisé aux deux paramètres.
+    # `distribution`/`distribution_path` ne varient pas dans la grille (répétés sur chaque ligne) :
+    # ce sont des colonnes de configuration, pas un axe qu'on balaye ici.
     rows = []
     for archive_rate in args.archive_rates:
         for conformity_bias in args.conformity_biases:
@@ -62,6 +74,8 @@ def main():
                     "generations": args.generations,
                     "archive_rate": archive_rate,
                     "conformity_bias": conformity_bias,
+                    "distribution": args.distribution,
+                    "distribution_path": args.distribution_path,
                     "seed": seed,
                 })
 

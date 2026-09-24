@@ -163,21 +163,57 @@ def frequencies_from_archive(archive, n_classes=None):
 
 
 # ============================================================================
+# DISTRIBUTION INITIALE (état de la population à t=0)
+# ============================================================================
+def initial_distribution(n_classes, distribution, rng, custom_probs=None):
+    """Retourne un vecteur de probabilités (longueur n_classes, somme=1) pour tirer l'état
+    initial de la population, selon la forme demandée :
+      - "power_law" : rang^-1 (catégorie 0 = la plus fréquente) — comportement historique,
+        défaut du modèle depuis le début du projet.
+      - "uniform"   : toutes les classes équiprobables (aucune structure de départ).
+      - "random"    : composition aléatoire tirée d'une loi de Dirichlet(1,...,1) — une
+        distribution différente à chaque `rng` (donc reproductible via --seed), sans forme
+        imposée a priori (ni plate, ni en loi de puissance).
+      - "custom"    : proportions fournies par l'appelant (`custom_probs`, ex: lues depuis un
+        CSV via --distribution_path), normalisées si besoin.
+    Ne pas confondre avec `init_probs` dans run_simulation : `init_probs` reste le mécanisme
+    existant pour imposer directement des proportions empiriques réelles (cf. run_validation) et
+    prend toujours le pas sur `distribution` si les deux sont fournis."""
+    if distribution == "power_law":
+        ranks = np.arange(1, n_classes + 1, dtype=float)
+        probs = ranks ** -1.0
+    elif distribution == "uniform":
+        probs = np.ones(n_classes, dtype=float)
+    elif distribution == "random":
+        return rng.dirichlet(np.ones(n_classes))   # déjà normalisé
+    elif distribution == "custom":
+        if custom_probs is None:
+            raise ValueError("distribution='custom' nécessite custom_probs (ou --distribution_path)")
+        probs = np.asarray(custom_probs, dtype=float)
+        if len(probs) != n_classes:
+            raise ValueError(
+                f"custom_probs a {len(probs)} valeurs, attendu n_classes={n_classes}"
+            )
+    else:
+        raise ValueError(
+            f"distribution inconnue: {distribution!r} "
+            "(choix : power_law, uniform, random, custom)"
+        )
+    return probs / probs.sum()
+
+
+# ============================================================================
 # MODÈLE DE SIMULATION (Wright-Fisher avec archivage cumulatif)
 # ============================================================================
 def run_simulation(rng, n_classes, n_init, n_final, t_max, archive_rate,
-                   init_probs=None,conformity_bias=1):
+                   init_probs=None, conformity_bias=1, distribution="power_law", custom_probs=None):
     """Single WF run with cumulative archiving. Returns final archive."""
     # --- État initial : n_init individus répartis sur n_classes catégories ---
-    if init_probs is not None:
-        # Distribution initiale imposée par l'appelant (ex: proportions empiriques réelles)
-        state = rng.choice(n_classes, size=n_init, p=init_probs)
-    else:
-        # Par défaut : distribution en loi de puissance (rang^-1), catégorie 0 = la plus fréquente
-        ranks_init = np.arange(1, n_classes + 1, dtype=float)
-        probs = ranks_init ** -1.0
-        probs /= probs.sum()
-        state = rng.choice(n_classes, size=n_init, p=probs)
+    if init_probs is None:
+        # Pas de proportions imposées explicitement -> on construit la distribution initiale
+        # selon la forme demandée (power_law par défaut = comportement historique inchangé)
+        init_probs = initial_distribution(n_classes, distribution, rng, custom_probs=custom_probs)
+    state = rng.choice(n_classes, size=n_init, p=init_probs)
 
     # Taille de la population à chaque génération t : interpolation linéaire entre n_init et n_final
     pop_sizes = [
@@ -203,12 +239,14 @@ def run_simulation(rng, n_classes, n_init, n_final, t_max, archive_rate,
 
 
 def run_multiple_simulations(rng, n_runs, n_classes, n_init, n_final, t_max, archive_rate,
-                              init_probs=None,conformity_bias=1):
+                              init_probs=None, conformity_bias=1, distribution="power_law",
+                              custom_probs=None):
     """Lance n_runs simulations indépendantes. Retourne la liste des distributions de fréquences
     (une par run, triées décroissant, classes absentes incluses avec fréquence 0)."""
     all_freqs = []
     for _ in range(n_runs):
-        archive = run_simulation(rng, n_classes, n_init, n_final, t_max, archive_rate, init_probs,conformity_bias)
+        archive = run_simulation(rng, n_classes, n_init, n_final, t_max, archive_rate, init_probs,
+                                  conformity_bias, distribution=distribution, custom_probs=custom_probs)
         freq, _ = frequencies_from_archive(archive, n_classes=n_classes)
         all_freqs.append(freq)
     return all_freqs
@@ -217,11 +255,14 @@ def run_multiple_simulations(rng, n_runs, n_classes, n_init, n_final, t_max, arc
 # ============================================================================
 # ORCHESTRATION DES RUNS (canonique n=40 / validation n=176)
 # ============================================================================
-def run_canonical(rng, n_classes, n_init, n_final, t_max, archive_rate, verbose=False, conformity_bias=1):
-    """Run 'canonique' (paramètres papier, n=40 par défaut, distribution initiale en loi de puissance)."""
-    print(f"\nRunning canonical simulation (n={n_classes})...")
+def run_canonical(rng, n_classes, n_init, n_final, t_max, archive_rate, verbose=False, conformity_bias=1,
+                   distribution="power_law", custom_probs=None):
+    """Run 'canonique' (paramètres papier, n=40 par défaut, distribution initiale paramétrable
+    via `distribution` : power_law (défaut historique), uniform, random, ou custom)."""
+    print(f"\nRunning canonical simulation (n={n_classes}, distribution={distribution})...")
     archive = run_simulation(rng, n_classes, n_init, n_final, t_max, archive_rate,
-                              conformity_bias=conformity_bias)
+                              conformity_bias=conformity_bias, distribution=distribution,
+                              custom_probs=custom_probs)
     # Distribution de fréquences du modèle, triée décroissant (comparable à emp_freq)
     freq, ranks = frequencies_from_archive(archive)
     if verbose:
@@ -254,7 +295,8 @@ def run_validation(rng, emp_freq_all, n_classes_valid, n_init, n_final, n_classe
 # SWEEP LOCAL (fait varier UN paramètre sur une liste de valeurs, en mémoire)
 # ============================================================================
 def sweep_parameter(param_name, values, rng, n_classes, initial_pop, final_pop, generations,
-                     archive_rate, init_probs=None, n_repeats=1):
+                     archive_rate, init_probs=None, n_repeats=1, distribution="power_law",
+                     custom_probs=None):
     """Relance une simulation pour chaque valeur de `values`, en ne changeant QUE `param_name`
     (les autres paramètres restent fixes aux valeurs passées). Tout se fait en mémoire, en
     réutilisant les mêmes fonctions que le mode 'un run' (pas de sous-processus, pas de
@@ -294,7 +336,8 @@ def sweep_parameter(param_name, values, rng, n_classes, initial_pop, final_pop, 
             t0 = time.perf_counter()
             archive = run_simulation(
                 rng, run_params["n_classes"], run_params["initial_pop"], run_params["final_pop"],
-                run_params["generations"], run_params["archive_rate"], init_probs=init_probs
+                run_params["generations"], run_params["archive_rate"], init_probs=init_probs,
+                distribution=distribution, custom_probs=custom_probs
             )
             elapsed = time.perf_counter() - t0
             # n_classes peut lui-même être le paramètre balayé -> toujours utile pour compléter
@@ -491,6 +534,17 @@ def build_arg_parser():
     parser.add_argument('-t', '--window', type=int, default=300)               # (non utilisé pour l'instant)
     parser.add_argument('-s', '--seed', type=int, default=42)
     parser.add_argument('-q','--conformity_bias', type=float, default=1)       #Biais de conformité
+    parser.add_argument('--distribution', choices=['power_law', 'uniform', 'random', 'custom'],
+                         default='power_law',
+                         help="Forme de la distribution initiale de la population à t=0 (défaut : "
+                              "power_law = rang^-1, comportement historique). 'uniform' = toutes "
+                              "les classes équiprobables. 'random' = composition aléatoire "
+                              "(Dirichlet), reproductible via --seed. 'custom' nécessite "
+                              "--distribution_path.")
+    parser.add_argument('--distribution_path', default=None,
+                         help="Chemin d'un CSV à une colonne (une valeur -- proportion ou compte -- "
+                              "par ligne, n_classes lignes) utilisé comme distribution initiale "
+                              "avec --distribution custom")
     parser.add_argument('--n_runs', type=int, default=1,
                          help="Nombre de runs canoniques à lancer/moyenner (1 = run unique)")
     parser.add_argument('--validate', action='store_true',
@@ -518,8 +572,18 @@ def build_arg_parser():
 
 
 def main():
-    args = build_arg_parser().parse_args()
+    parser = build_arg_parser()
+    args = parser.parse_args()
     rng = np.random.default_rng(args.seed)
+
+    # --- Distribution initiale personnalisée (--distribution custom) ---
+    custom_probs = None
+    if args.distribution == "custom":
+        if not args.distribution_path:
+            parser.error("--distribution custom nécessite --distribution_path")
+        custom_probs = np.loadtxt(args.distribution_path, delimiter=",").reshape(-1)
+        print(f"\nDistribution initiale personnalisée chargée : {args.distribution_path} "
+              f"({len(custom_probs)} valeurs)")
 
     # --- Données empiriques : chargement + métriques de diversité ---
     df, counter, emp_freq_all = load_empirical_data(args.input)
@@ -534,7 +598,8 @@ def main():
         "generations": args.generations,
         "archive_rate": args.archive_rate,
         "seed": args.seed,
-        "conformity_bias" : args.conformity_bias
+        "conformity_bias" : args.conformity_bias,
+        "distribution": args.distribution,
     }
 
     # ── Mode sweep : fait varier UN paramètre, en mémoire, et compare à l'empirique ───────────
@@ -552,7 +617,7 @@ def main():
         sweep_df, sweep_raw_df = sweep_parameter(
             args.sweep_param, values, rng,
             args.n_classes, args.initial_pop, args.final_pop, args.generations, args.archive_rate,
-            n_repeats=args.sweep_repeats
+            n_repeats=args.sweep_repeats, distribution=args.distribution, custom_probs=custom_probs
         )
         print(sweep_df.to_string(index=False))
 
@@ -581,7 +646,8 @@ def main():
         t0 = time.perf_counter()
         all_freqs = run_multiple_simulations(
             rng, args.n_runs, args.n_classes, args.initial_pop, args.final_pop,
-            args.generations, args.archive_rate, conformity_bias=args.conformity_bias
+            args.generations, args.archive_rate, conformity_bias=args.conformity_bias,
+            distribution=args.distribution, custom_probs=custom_probs
         )
         runtime_s = (time.perf_counter() - t0) / args.n_runs   # temps moyen par run
         # Print comparatif par simulation (TODO historique)
@@ -606,7 +672,8 @@ def main():
         archive, model_freq, model_ranks = run_canonical(
             rng, args.n_classes, args.initial_pop, args.final_pop,
             args.generations, args.archive_rate, verbose=args.verbose,
-            conformity_bias=args.conformity_bias
+            conformity_bias=args.conformity_bias, distribution=args.distribution,
+            custom_probs=custom_probs
         )
         runtime_s = time.perf_counter() - t0
         print_diversity_metrics(model_freq, label=f"Simulation (n={args.n_classes})")

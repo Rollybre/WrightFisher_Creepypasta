@@ -43,15 +43,24 @@ def _run_one_row(row_dict):
     closure/méthode à un worker, seulement une fonction importable par son nom de module."""
     rng = np.random.default_rng(int(row_dict["seed"]))
 
-    # .get avec défaut 1.0 : reste compatible avec un params.csv généré avant l'ajout de
-    # conformity_bias (colonne absente -> comportement neutre historique, inchangé)
+    # .get avec défaut : reste compatible avec un params.csv généré avant l'ajout de
+    # conformity_bias/distribution (colonne absente -> comportement neutre historique, inchangé)
     conformity_bias = float(row_dict.get("conformity_bias", 1.0))
+    distribution = row_dict.get("distribution", "power_law")
+    if pd.isna(distribution) or distribution == "":
+        distribution = "power_law"
+    distribution_path = row_dict.get("distribution_path")
+    custom_probs = None
+    if distribution == "custom":
+        if pd.isna(distribution_path) or not distribution_path:
+            raise ValueError("distribution='custom' nécessite une distribution_path non vide dans la grille")
+        custom_probs = np.loadtxt(distribution_path, delimiter=",").reshape(-1)
 
     t0 = time.perf_counter()
     archive = run_simulation(
         rng, int(row_dict["n_classes"]), int(row_dict["initial_pop"]), int(row_dict["final_pop"]),
         int(row_dict["generations"]), float(row_dict["archive_rate"]),
-        conformity_bias=conformity_bias
+        conformity_bias=conformity_bias, distribution=distribution, custom_probs=custom_probs
     )
     elapsed = time.perf_counter() - t0
 
