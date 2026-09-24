@@ -22,3 +22,9 @@ code/todo.txt
 outputs/
 results_fine_grid.csv
 sweep_fine.png
+
+# Exception : images référencées par le notebook d'exploration (nécessaires pour que le
+# notebook s'affiche correctement hors de cette machine, ex. sur GitHub) -- snapshot figé,
+# pas régénéré automatiquement comme le reste de outputs/.
+!code/notebook_figures/
+!code/notebook_figures/*.png
