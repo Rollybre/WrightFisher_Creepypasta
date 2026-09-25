@@ -50,6 +50,12 @@ jupyter notebook code/archive_rate_conformity_exploration.ipynb
 ```
 
 
+## À Faire
+
+- Attaquer le concept d'innovation
+- Faire des slides
+- 
+
 
 ##  Parameters 
 
