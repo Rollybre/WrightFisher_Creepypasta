@@ -135,17 +135,33 @@ def compute_diversity_metrics(freqs, orders=(0, 1, 2, np.inf)):
     return metrics
 
 
-def print_diversity_metrics(freqs, label="", orders=(0, 1, 2, np.inf)):
+def print_diversity_metrics(freqs, label="", orders=(0, 1, 2, np.inf), compare_to=None):
     """Calcule (compute_diversity_metrics) puis affiche l'indice de Gini et les nombres de Hill.
     orders=0: richesse, 1: exp(Shannon), 2: inverse de Simpson, inf: inverse de Berger-Parker
-    (plus q augmente, moins les catégories rares pèsent dans l'indice). Retourne le dict calculé."""
+    (plus q augmente, moins les catégories rares pèsent dans l'indice). Retourne le dict calculé.
+
+    `compare_to` (optionnel) : dict de métriques empiriques (même format que le retour de
+    compute_diversity_metrics, ex. `compute_diversity_metrics(emp_freq_all)`) -- si fourni, chaque
+    ligne affiche en plus la valeur empirique et l'écart (Δ = simulé - empirique), pour comparer
+    à chaque run sans avoir à se référer au print initial des données empiriques (cf. --compare_empirical)."""
     names = {0: "Richesse", 1: "Shannon", 2: "Inverse de Simpson", np.inf: "Inverse de Berger-Parker"}
     metrics = compute_diversity_metrics(freqs, orders=orders)
     if label:
         print(f"\n-- Diversité : {label} --")
-    print(f'  Indice de Gini : {metrics["gini"]:.4f}')
+
+    def _line(key, display_name, value, decimals):
+        if compare_to is not None and key in compare_to:
+            emp_value = compare_to[key]
+            delta = value - emp_value
+            print(f'  {display_name} : {value:.{decimals}f}  '
+                  f'(empirique: {emp_value:.{decimals}f}, Δ={delta:+.{decimals}f})')
+        else:
+            print(f'  {display_name} : {value:.{decimals}f}')
+
+    _line("gini", "Indice de Gini", metrics["gini"], decimals=4)
     for q in orders:
-        print(f'  Nombre de Hill ordre {q} ({names.get(q, f"q={q}")}) : {metrics[_hill_key(q)]:.2f}')
+        key = _hill_key(q)
+        _line(key, f"Nombre de Hill ordre {q} ({names.get(q, f'q={q}')})", metrics[key], decimals=2)
     return metrics
 
 
@@ -206,8 +222,19 @@ def initial_distribution(n_classes, distribution, rng, custom_probs=None):
 # MODÈLE DE SIMULATION (Wright-Fisher avec archivage cumulatif)
 # ============================================================================
 def run_simulation(rng, n_classes, n_init, n_final, t_max, archive_rate,
-                   init_probs=None, conformity_bias=1, distribution="power_law", custom_probs=None):
-    """Single WF run with cumulative archiving. Returns final archive."""
+                   init_probs=None, conformity_bias=1, distribution="power_law", custom_probs=None,
+                   archive=True):
+    """Single WF run. Retourne soit l'archive cumulative (comportement historique, `archive=True`
+    par défaut), soit -- si `archive=False` -- l'état de la POPULATION FINALE SEULE (génération
+    t_max-1, aucune accumulation sur les générations précédentes).
+
+    Ne pas confondre `archive=False` avec `archive_rate` proche de 0 : `archive_rate` ne contrôle
+    QUE la fraction de chaque génération ajoutée à l'archive cumulative -- même à `archive_rate=1.0`
+    (100%, "aucune perte"), l'archive reste la somme de TOUTES les générations (donc bien plus
+    grande et bien plus diverse que n'importe quelle génération seule). `archive=False` est le
+    seul moyen d'obtenir la diversité d'UNE SEULE génération (la dernière), sans cet effet cumulatif
+    -- ce que `archive_rate=1.0` ne fait PAS, contrairement à une intuition naturelle mais fausse
+    (l'archivage à 100% de chaque génération n'équivaut jamais à ne pas archiver du tout)."""
     # --- État initial : n_init individus répartis sur n_classes catégories ---
     if init_probs is None:
         # Pas de proportions imposées explicitement -> on construit la distribution initiale
@@ -221,7 +248,7 @@ def run_simulation(rng, n_classes, n_init, n_final, t_max, archive_rate,
         for t in range(t_max)
     ]
 
-    archive = []
+    archive_list = []
     for t in range(t_max):
 
         # Rééchantillonnage Wright-Fisher : tirage avec remise dans la génération précédente
@@ -231,23 +258,29 @@ def run_simulation(rng, n_classes, n_init, n_final, t_max, archive_rate,
         state = rng.choice(n_classes, p=conform_probs, replace=True, size = pop_sizes[t])
         #En partant de la seed (rng.choice), on associe chaque classe à une prob donnée plus haut
         #L'échantillon est de taille pop_sizes[t] ie t-ème génération dans la table de taille prédéfinie.
-        # Une fraction archive_rate de la génération courante est archivée (sans remise), de façon cumulative
-        n_arch = int(len(state) * archive_rate)
-        if n_arch > 0:
-            archive.extend(rng.choice(state, replace=False, size=n_arch))
-    return np.array(archive)
+        # Une fraction archive_rate de la génération courante est archivée (sans remise), de façon
+        # cumulative -- seulement si archive=True (comportement historique, cf. docstring).
+        if archive:
+            n_arch = int(len(state) * archive_rate)
+            if n_arch > 0:
+                archive_list.extend(rng.choice(state, replace=False, size=n_arch))
+
+    # archive=False : pas d'accumulation -> on retourne uniquement la dernière génération (`state`),
+    # jamais l'archive cumulative (qui reste vide dans ce cas).
+    return np.array(archive_list) if archive else np.array(state)
 
 
 def run_multiple_simulations(rng, n_runs, n_classes, n_init, n_final, t_max, archive_rate,
                               init_probs=None, conformity_bias=1, distribution="power_law",
-                              custom_probs=None):
+                              custom_probs=None, archive=True):
     """Lance n_runs simulations indépendantes. Retourne la liste des distributions de fréquences
     (une par run, triées décroissant, classes absentes incluses avec fréquence 0)."""
     all_freqs = []
     for _ in range(n_runs):
-        archive = run_simulation(rng, n_classes, n_init, n_final, t_max, archive_rate, init_probs,
-                                  conformity_bias, distribution=distribution, custom_probs=custom_probs)
-        freq, _ = frequencies_from_archive(archive, n_classes=n_classes)
+        result = run_simulation(rng, n_classes, n_init, n_final, t_max, archive_rate, init_probs,
+                                 conformity_bias, distribution=distribution, custom_probs=custom_probs,
+                                 archive=archive)
+        freq, _ = frequencies_from_archive(result, n_classes=n_classes)
         all_freqs.append(freq)
     return all_freqs
 
@@ -256,22 +289,23 @@ def run_multiple_simulations(rng, n_runs, n_classes, n_init, n_final, t_max, arc
 # ORCHESTRATION DES RUNS (canonique n=40 / validation n=176)
 # ============================================================================
 def run_canonical(rng, n_classes, n_init, n_final, t_max, archive_rate, verbose=False, conformity_bias=1,
-                   distribution="power_law", custom_probs=None):
+                   distribution="power_law", custom_probs=None, archive=True):
     """Run 'canonique' (paramètres papier, n=40 par défaut, distribution initiale paramétrable
     via `distribution` : power_law (défaut historique), uniform, random, ou custom)."""
-    print(f"\nRunning canonical simulation (n={n_classes}, distribution={distribution})...")
-    archive = run_simulation(rng, n_classes, n_init, n_final, t_max, archive_rate,
-                              conformity_bias=conformity_bias, distribution=distribution,
-                              custom_probs=custom_probs)
+    print(f"\nRunning canonical simulation (n={n_classes}, distribution={distribution}, archive={archive})...")
+    result = run_simulation(rng, n_classes, n_init, n_final, t_max, archive_rate,
+                             conformity_bias=conformity_bias, distribution=distribution,
+                             custom_probs=custom_probs, archive=archive)
     # Distribution de fréquences du modèle, triée décroissant (comparable à emp_freq)
-    freq, ranks = frequencies_from_archive(archive)
+    freq, ranks = frequencies_from_archive(result)
     if verbose:
-        print(f"  Archive size: {len(archive)}, {len(freq)} classes represented")
-    return archive, freq, ranks
+        label = "Archive size" if archive else "Population finale (pas d'archivage)"
+        print(f"  {label}: {len(result)}, {len(freq)} classes represented")
+    return result, freq, ranks
 
 
 def run_validation(rng, emp_freq_all, n_classes_valid, n_init, n_final, n_classes_paper,
-                    t_max, archive_rate, verbose=False, conformity_bias=1):
+                    t_max, archive_rate, verbose=False, conformity_bias=1, archive=True):
     """Run de 'validation' à la résolution empirique (n=176 par défaut), initialisé sur les
     proportions empiriques réelles, pour comparaison directe avec les données."""
     # Scale n_i / n_f proportionnellement pour garder la même densité par classe
@@ -281,14 +315,15 @@ def run_validation(rng, emp_freq_all, n_classes_valid, n_init, n_final, n_classe
     emp_probs = emp_freq_all / emp_freq_all.sum()
 
     print(f"\nRunning validation simulation (n={n_classes_valid}, n_i={n_init_valid})...")
-    archive = run_simulation(
-        rng, n_classes_valid, n_init_valid, n_final_valid, t_max, archive_rate,
+    archive_result = run_simulation(
+        rng, n_classes_valid, n_init_valid, n_final_valid, t_max, archive_rate, archive=archive,
         init_probs=emp_probs, conformity_bias=conformity_bias
     )
-    freq, ranks = frequencies_from_archive(archive, n_classes=n_classes_valid)
+    freq, ranks = frequencies_from_archive(archive_result, n_classes=n_classes_valid)
     if verbose:
-        print(f"  Archive size: {len(archive)}, {(freq > 0).sum()} classes represented")
-    return archive, freq, ranks
+        label = "Archive size" if archive else "Population finale (pas d'archivage)"
+        print(f"  {label}: {len(archive_result)}, {(freq > 0).sum()} classes represented")
+    return archive_result, freq, ranks
 
 
 # ============================================================================
@@ -296,7 +331,7 @@ def run_validation(rng, emp_freq_all, n_classes_valid, n_init, n_final, n_classe
 # ============================================================================
 def sweep_parameter(param_name, values, rng, n_classes, initial_pop, final_pop, generations,
                      archive_rate, init_probs=None, n_repeats=1, distribution="power_law",
-                     custom_probs=None):
+                     custom_probs=None, archive=True, conformity_bias=1):
     """Relance une simulation pour chaque valeur de `values`, en ne changeant QUE `param_name`
     (les autres paramètres restent fixes aux valeurs passées). Tout se fait en mémoire, en
     réutilisant les mêmes fonctions que le mode 'un run' (pas de sous-processus, pas de
@@ -319,7 +354,7 @@ def sweep_parameter(param_name, values, rng, n_classes, initial_pop, final_pop, 
     # pour rester cohérent avec `params` dans main() et éviter toute confusion de nommage.
     base_params = {
         "n_classes": n_classes, "initial_pop": initial_pop, "final_pop": final_pop,
-        "generations": generations, "archive_rate": archive_rate,
+        "generations": generations, "archive_rate": archive_rate, "conformity_bias": conformity_bias,
     }
     if param_name not in base_params:
         raise ValueError(f"param_name doit être un de {list(base_params)}, reçu {param_name!r}")
@@ -334,15 +369,16 @@ def sweep_parameter(param_name, values, rng, n_classes, initial_pop, final_pop, 
             # Chronométré ici (et pas dans run_simulation) pour que la mesure reste dans le
             # DataFrame de résultats comme une métrique de plus (moyennée/écart-type avec le reste)
             t0 = time.perf_counter()
-            archive = run_simulation(
+            result = run_simulation(
                 rng, run_params["n_classes"], run_params["initial_pop"], run_params["final_pop"],
                 run_params["generations"], run_params["archive_rate"], init_probs=init_probs,
-                distribution=distribution, custom_probs=custom_probs
+                conformity_bias=run_params["conformity_bias"],
+                distribution=distribution, custom_probs=custom_probs, archive=archive
             )
             elapsed = time.perf_counter() - t0
             # n_classes peut lui-même être le paramètre balayé -> toujours utile pour compléter
             # les classes non représentées par des zéros (comparaison cohérente d'une valeur à l'autre)
-            freq, _ = frequencies_from_archive(archive, n_classes=run_params["n_classes"])
+            freq, _ = frequencies_from_archive(result, n_classes=run_params["n_classes"])
             metrics = compute_diversity_metrics(freq)
             metrics["runtime_s"] = elapsed
             repeat_metrics.append(metrics)
@@ -534,6 +570,13 @@ def build_arg_parser():
     parser.add_argument('-t', '--window', type=int, default=300)               # (non utilisé pour l'instant)
     parser.add_argument('-s', '--seed', type=int, default=42)
     parser.add_argument('-q','--conformity_bias', type=float, default=1)       #Biais de conformité
+    parser.add_argument('--no_archive', action='store_true',
+                         help="Désactive l'archivage cumulatif : retourne uniquement la POPULATION "
+                              "FINALE (génération t_max-1), sans accumuler sur les générations "
+                              "précédentes. Par défaut, l'archivage est activé (comportement "
+                              "historique). Attention : --archive_rate=1.0 (100%%) n'est PAS "
+                              "équivalent à --no_archive -- même à 100%%, l'archive cumulative "
+                              "reste la somme de TOUTES les générations, pas juste la dernière.")
     parser.add_argument('--distribution', choices=['power_law', 'uniform', 'random', 'custom'],
                          default='power_law',
                          help="Forme de la distribution initiale de la population à t=0 (défaut : "
@@ -555,16 +598,24 @@ def build_arg_parser():
                               "(fichier nommé n{n_classes}_alpha{archive_rate}_seed{seed}.json ; "
                               "en mode --sweep_param, sauvegarde plutôt sweep_<param>.csv)")
     parser.add_argument('--sweep_param',
-                         choices=["archive_rate", "n_classes", "initial_pop", "final_pop", "generations"],
+                         choices=["archive_rate", "conformity_bias", "n_classes", "initial_pop",
+                                  "final_pop", "generations"],
                          default=None,
                          help="Nom du paramètre à faire varier (sweep local, en mémoire). "
-                              "Remplace le mode run/validate normal ; à utiliser avec --sweep_values.")
+                              "Remplace le mode run/validate normal ; à utiliser avec --sweep_values. "
+                              "Les autres paramètres restent fixes à leur valeur CLI (ex: --distribution, "
+                              "--no_archive, --conformity_bias si ce n'est pas lui le paramètre balayé).")
     parser.add_argument('--sweep_values', type=float, nargs='+', default=None,
                          help="Liste des valeurs à tester pour --sweep_param (ex: 0.01 0.05 0.1 0.2)")
     parser.add_argument('--sweep_repeats', type=int, default=1,
                          help="Répète chaque valeur du sweep ce nombre de fois et moyenne les "
                               "métriques (+ écart-type), pour distinguer un vrai effet du bruit "
                               "d'un tirage unique (défaut 1 = pas de répétition)")
+    parser.add_argument('--compare_empirical', action='store_true',
+                         help="Affiche, à chaque run (unique, --n_runs, --validate, ou chaque ligne "
+                              "d'un --sweep_param), la valeur empirique et l'écart (Δ = simulé - "
+                              "empirique) juste à côté de chaque métrique, plutôt que seulement une "
+                              "fois en tête de sortie.")
     parser.add_argument('--plot', default=None,
                          help="Chemin d'un fichier image (.png) où sauvegarder une figure de comparaison "
                               "empirique/simulé (rang-fréquence en mode run, métriques vs paramètre en mode sweep)")
@@ -589,6 +640,10 @@ def main():
     df, counter, emp_freq_all = load_empirical_data(args.input)
     emp_freq, emp_ranks = summarize_empirical_data(df, emp_freq_all, N_TOP)
     print_diversity_metrics(emp_freq_all, label="Données empiriques")
+    # Calculé une seule fois, réutilisé partout où --compare_empirical demande une comparaison
+    # (run unique, --n_runs, --validate, chaque ligne de --sweep_param).
+    emp_metrics = compute_diversity_metrics(emp_freq_all)
+    compare_to = emp_metrics if args.compare_empirical else None
 
     # Paramètres du run courant, réutilisés pour construire l'enregistrement de résultat
     params = {
@@ -600,6 +655,7 @@ def main():
         "seed": args.seed,
         "conformity_bias" : args.conformity_bias,
         "distribution": args.distribution,
+        "archive": not args.no_archive,
     }
 
     # ── Mode sweep : fait varier UN paramètre, en mémoire, et compare à l'empirique ───────────
@@ -610,15 +666,25 @@ def main():
             print("\n[!] --validate est ignoré en mode sweep (--sweep_param) : "
                   "chaque point du sweep est un run canonique simple, pas de run n=176.")
         values = args.sweep_values
-        if args.sweep_param != "archive_rate":
+        if args.sweep_param not in ("archive_rate", "conformity_bias"):
             values = [int(v) for v in values]  # les autres paramètres balayables sont des entiers
         repeats_note = f" (x{args.sweep_repeats} répétitions, moyennées)" if args.sweep_repeats > 1 else ""
-        print(f"\nSweep sur '{args.sweep_param}' : {values}{repeats_note}")
+        print(f"\nSweep sur '{args.sweep_param}' : {values}{repeats_note} "
+              f"(distribution={args.distribution}, archive={not args.no_archive})")
         sweep_df, sweep_raw_df = sweep_parameter(
             args.sweep_param, values, rng,
             args.n_classes, args.initial_pop, args.final_pop, args.generations, args.archive_rate,
-            n_repeats=args.sweep_repeats, distribution=args.distribution, custom_probs=custom_probs
+            n_repeats=args.sweep_repeats, distribution=args.distribution, custom_probs=custom_probs,
+            archive=not args.no_archive, conformity_bias=args.conformity_bias
         )
+        if compare_to is not None:
+            # Une colonne d'écart (Δ = simulé - empirique) par métrique, ajoutée juste après la
+            # colonne elle-même -- comparer chaque ligne du sweep à l'empirique sans devoir se
+            # référer au print initial des données empiriques, ni tracer --plot pour le voir.
+            for metric, emp_value in compare_to.items():
+                if metric in sweep_df.columns:
+                    sweep_df.insert(sweep_df.columns.get_loc(metric) + 1,
+                                     f"{metric}_vs_emp", sweep_df[metric] - emp_value)
         print(sweep_df.to_string(index=False))
 
         if args.output:
@@ -636,7 +702,6 @@ def main():
                 print(f"Runs individuels sauvegardés : {raw_csv_path}")
 
         if args.plot:
-            emp_metrics = compute_diversity_metrics(emp_freq_all)
             plot_sweep_metrics(sweep_df, args.sweep_param, emp_metrics, args.plot)
         return   # le mode sweep s'arrête ici, il ne passe pas par le run/validate normal
 
@@ -647,13 +712,14 @@ def main():
         all_freqs = run_multiple_simulations(
             rng, args.n_runs, args.n_classes, args.initial_pop, args.final_pop,
             args.generations, args.archive_rate, conformity_bias=args.conformity_bias,
-            distribution=args.distribution, custom_probs=custom_probs
+            distribution=args.distribution, custom_probs=custom_probs, archive=not args.no_archive
         )
         runtime_s = (time.perf_counter() - t0) / args.n_runs   # temps moyen par run
         # Print comparatif par simulation (TODO historique)
         results = []
         for i, freq in enumerate(all_freqs, 1):
-            print_diversity_metrics(freq, label=f"Run {i}/{args.n_runs} (n={args.n_classes})")
+            print_diversity_metrics(freq, label=f"Run {i}/{args.n_runs} (n={args.n_classes})",
+                                     compare_to=compare_to)
             results.append(make_result_record({**params, "run": i, "runtime_s": runtime_s}, freq))
 
         # Visuel façon Figure 6 de analysis_stats.py : moyenne + bande 5e-95e percentile sur les
@@ -673,10 +739,11 @@ def main():
             rng, args.n_classes, args.initial_pop, args.final_pop,
             args.generations, args.archive_rate, verbose=args.verbose,
             conformity_bias=args.conformity_bias, distribution=args.distribution,
-            custom_probs=custom_probs
+            custom_probs=custom_probs, archive=not args.no_archive
         )
         runtime_s = time.perf_counter() - t0
-        print_diversity_metrics(model_freq, label=f"Simulation (n={args.n_classes})")
+        print_diversity_metrics(model_freq, label=f"Simulation (n={args.n_classes})",
+                                 compare_to=compare_to)
         print(f"  Durée du run : {runtime_s:.3f}s")
         results = make_result_record({**params, "runtime_s": runtime_s}, model_freq)
 
@@ -693,11 +760,12 @@ def main():
         _, valid_freq, _ = run_validation(
             rng, emp_freq_all, args.n_classes_valid, args.initial_pop, args.final_pop,
             args.n_classes, args.generations, args.archive_rate, verbose=args.verbose,
-            conformity_bias=args.conformity_bias
+            conformity_bias=args.conformity_bias, archive=not args.no_archive
         )
         validation_runtime_s = time.perf_counter() - t0
         valid_freq_nonzero = valid_freq[valid_freq > 0]
-        print_diversity_metrics(valid_freq_nonzero, label=f"Validation (n={args.n_classes_valid})")
+        print_diversity_metrics(valid_freq_nonzero, label=f"Validation (n={args.n_classes_valid})",
+                                 compare_to=compare_to)
         print(f"  Durée du run : {validation_runtime_s:.3f}s")
         validation_record = make_result_record(
             {**params, "n_classes_valid": args.n_classes_valid, "runtime_s": validation_runtime_s},
