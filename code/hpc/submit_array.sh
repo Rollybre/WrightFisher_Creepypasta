@@ -37,14 +37,27 @@ SIM_SCRIPT="$(dirname "$0")/../simulation.py"
 
 # Ligne 1 = header -> la tâche $SGE_TASK_ID lit la ligne $SGE_TASK_ID+1
 # Colonnes de params.csv (build_param_grid.py) : n_classes,initial_pop,final_pop,generations,
-# archive_rate,conformity_bias,seed -- si tu régénères params.csv avec un ordre différent,
-# adapte le `read` ci-dessous en conséquence.
+# archive_rate,conformity_bias,archive,distribution,distribution_path,seed -- si tu régénères
+# params.csv avec un ordre différent, adapte le `read` ci-dessous en conséquence.
 LINE=$(sed -n "$((SGE_TASK_ID + 1))p" "$PARAMS_FILE")
-IFS=',' read -r N_CLASSES INITIAL_POP FINAL_POP GENERATIONS ARCHIVE_RATE CONFORMITY_BIAS SEED <<< "$LINE"
+IFS=',' read -r N_CLASSES INITIAL_POP FINAL_POP GENERATIONS ARCHIVE_RATE CONFORMITY_BIAS ARCHIVE DISTRIBUTION DISTRIBUTION_PATH SEED <<< "$LINE"
 
-echo "Task $SGE_TASK_ID : n_classes=$N_CLASSES archive_rate=$ARCHIVE_RATE conformity_bias=$CONFORMITY_BIAS seed=$SEED"
+echo "Task $SGE_TASK_ID : n_classes=$N_CLASSES archive_rate=$ARCHIVE_RATE conformity_bias=$CONFORMITY_BIAS archive=$ARCHIVE distribution=$DISTRIBUTION seed=$SEED"
+
+# archive=false -> --no_archive ; archive=true (ou colonne absente/vide) -> comportement
+# historique inchangé (archivage cumulatif, cf. simulation.run_simulation).
+NO_ARCHIVE_FLAG=""
+if [ "$ARCHIVE" = "false" ] || [ "$ARCHIVE" = "False" ]; then
+    NO_ARCHIVE_FLAG="--no_archive"
+fi
+
+DISTRIBUTION_PATH_FLAG=""
+if [ -n "$DISTRIBUTION_PATH" ]; then
+    DISTRIBUTION_PATH_FLAG="--distribution_path $DISTRIBUTION_PATH"
+fi
 
 python "$SIM_SCRIPT" \
     -N "$N_CLASSES" -ni "$INITIAL_POP" -nf "$FINAL_POP" \
     -T "$GENERATIONS" -alpha "$ARCHIVE_RATE" -q "$CONFORMITY_BIAS" -s "$SEED" \
+    --distribution "${DISTRIBUTION:-power_law}" $DISTRIBUTION_PATH_FLAG $NO_ARCHIVE_FLAG \
     -o "$OUTPUT_DIR"

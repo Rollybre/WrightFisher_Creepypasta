@@ -16,9 +16,13 @@ Usage (depuis code/hpc/) :
     python build_param_grid.py --archive_rates 0.01 0.02 ... --n_seeds 50 -o params.csv
     python run_param_grid.py params.csv -o results.csv --n_jobs 8 --plot sweep_fine.png
     # (la même params.csv peut aussi être soumise sur HPC via : qsub -t 1-N submit_array.sh)
+
+    # Reprise après interruption (grille de plusieurs heures/jours, écrite au fur et à mesure) :
+    python run_param_grid.py params.csv -o results.csv --n_jobs 24 --resume
 """
 
 import argparse
+import csv
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -37,6 +41,17 @@ from simulation import (
 )
 
 
+def _to_bool(value, default=True):
+    """Parse la colonne `archive` (True/False, 'true'/'false', 1/0...) après un aller-retour CSV,
+    où tout redevient une chaîne. .get avec défaut : reste compatible avec un params.csv généré
+    avant l'ajout de cette colonne (absente -> comportement historique inchangé, archive=True)."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "1", "t", "yes")
+
+
 def _run_one_row(row_dict):
     """Lance UN run à partir d'une ligne de la grille (passée en dict, picklable pour
     multiprocessing). Fonction top-level exprès : ProcessPoolExecutor ne peut pas envoyer une
@@ -44,8 +59,9 @@ def _run_one_row(row_dict):
     rng = np.random.default_rng(int(row_dict["seed"]))
 
     # .get avec défaut : reste compatible avec un params.csv généré avant l'ajout de
-    # conformity_bias/distribution (colonne absente -> comportement neutre historique, inchangé)
+    # conformity_bias/distribution/archive (colonne absente -> comportement neutre historique, inchangé)
     conformity_bias = float(row_dict.get("conformity_bias", 1.0))
+    archive = _to_bool(row_dict.get("archive"), default=True)
     distribution = row_dict.get("distribution", "power_law")
     if pd.isna(distribution) or distribution == "":
         distribution = "power_law"
@@ -57,23 +73,29 @@ def _run_one_row(row_dict):
         custom_probs = np.loadtxt(distribution_path, delimiter=",").reshape(-1)
 
     t0 = time.perf_counter()
-    archive = run_simulation(
+    result = run_simulation(
         rng, int(row_dict["n_classes"]), int(row_dict["initial_pop"]), int(row_dict["final_pop"]),
         int(row_dict["generations"]), float(row_dict["archive_rate"]),
-        conformity_bias=conformity_bias, distribution=distribution, custom_probs=custom_probs
+        conformity_bias=conformity_bias, distribution=distribution, custom_probs=custom_probs,
+        archive=archive,
     )
     elapsed = time.perf_counter() - t0
 
-    freq, _ = frequencies_from_archive(archive, n_classes=int(row_dict["n_classes"]))
+    freq, _ = frequencies_from_archive(result, n_classes=int(row_dict["n_classes"]))
     metrics = compute_diversity_metrics(freq)
     metrics["runtime_s"] = elapsed
     return {**row_dict, **metrics}
 
 
-def run_grid(params_df, n_jobs=1):
+def run_grid(params_df, n_jobs=1, on_result=None):
     """Lance un run indépendant par ligne de params_df et retourne un DataFrame de résultats.
     n_jobs > 1 : répartit les lignes sur n_jobs processus (chaque ligne étant déjà indépendante
-    -- son propre rng -- il n'y a rien à coordonner entre workers, contrairement au sweep local)."""
+    -- son propre rng -- il n'y a rien à coordonner entre workers, contrairement au sweep local).
+
+    `on_result` (optionnel) : callback appelé avec CHAQUE résultat dès qu'il est prêt (avant même
+    la fin de la grille entière) -- utilisé par main() pour écrire au fur et à mesure sur disque
+    (cf. --resume) plutôt que tout garder en mémoire jusqu'à la fin d'une grille pouvant durer
+    des heures/jours (risque de tout perdre si le process est tué en cours de route)."""
     row_dicts = [row.to_dict() for _, row in params_df.iterrows()]
 
     if n_jobs > 1:
@@ -86,6 +108,8 @@ def run_grid(params_df, n_jobs=1):
                 for future in as_completed(futures):
                     i = futures[future]
                     results[i] = future.result()
+                    if on_result is not None:
+                        on_result(results[i])
                     pbar.set_postfix(gini=f"{results[i]['gini']:.3f}")
                     pbar.update(1)
     else:
@@ -94,6 +118,8 @@ def run_grid(params_df, n_jobs=1):
             for d in pbar:
                 r = _run_one_row(d)
                 results.append(r)
+                if on_result is not None:
+                    on_result(r)
                 pbar.set_postfix(gini=f"{r['gini']:.3f}")
 
     return pd.DataFrame(results)
@@ -134,24 +160,71 @@ def build_arg_parser():
                               "du plot 1D standard -- pour un sweep sur deux paramètres croisés.")
     parser.add_argument('--data', default=str(DATA_PATH),
                          help="CSV empirique pour la comparaison du plot")
+    parser.add_argument('--resume', action='store_true',
+                         help="Si --output existe déjà, ignore les lignes de la grille déjà "
+                              "présentes dedans (comparaison sur les colonnes de params.csv) et ne "
+                              "relance que le reste -- reprise après interruption (crash, machine "
+                              "redémarrée, ssh coupé sans nohup/tmux...) sans tout refaire. Les "
+                              "nouveaux résultats sont ajoutés à la suite du fichier existant.")
     return parser
 
 
 def main():
     args = build_arg_parser().parse_args()
     params_df = pd.read_csv(args.params_file)
+    output_path = Path(args.output)
+    key_cols = list(params_df.columns)
+
+    # --resume : retire de la grille les lignes déjà présentes dans --output (même valeurs sur
+    # TOUTES les colonnes d'entrée -- le "seed" seul ne suffit pas à identifier une ligne, il se
+    # répète à l'identique pour chaque combinaison archive_rate x conformity_bias x ... x archive,
+    # cf. build_param_grid.py).
+    file_exists = output_path.exists() and output_path.stat().st_size > 0
+    if args.resume and file_exists:
+        done_df = pd.read_csv(output_path)
+        merged = params_df.merge(done_df[key_cols].drop_duplicates(), on=key_cols, how="left", indicator=True)
+        n_done = (merged["_merge"] == "both").sum()
+        params_df = merged[merged["_merge"] == "left_only"][key_cols].reset_index(drop=True)
+        print(f"--resume : {n_done} lignes déjà faites dans {output_path} (ignorées), "
+              f"{len(params_df)} restantes à lancer")
+        if len(params_df) == 0:
+            print("Rien à faire, la grille est déjà entièrement traitée.")
+            return
+
     print(f"{len(params_df)} runs à lancer depuis {args.params_file} (n_jobs={args.n_jobs})")
 
+    # Écriture incrémentale (une ligne dès qu'un run termine, pas seulement à la toute fin) :
+    # une grille de plusieurs millions de runs peut tourner des heures/jours -- sans ça, tuer le
+    # process (ou une coupure ssh sans nohup/tmux) perdrait TOUT le travail déjà fait, pas juste ce
+    # qui restait. Header écrit une seule fois (jamais en mode --resume sur un fichier non vide).
+    out_file = open(output_path, "a" if (args.resume and file_exists) else "w", newline="")
+    writer = None
+
+    def _write_incremental(row):
+        nonlocal writer
+        if writer is None:
+            writer = csv.DictWriter(out_file, fieldnames=list(row.keys()))
+            if not (args.resume and file_exists):
+                writer.writeheader()
+        writer.writerow(row)
+        out_file.flush()
+
     t0 = time.perf_counter()
-    results_df = run_grid(params_df, n_jobs=args.n_jobs)
+    try:
+        run_grid(params_df, n_jobs=args.n_jobs, on_result=_write_incremental)
+    finally:
+        out_file.close()
     total_s = time.perf_counter() - t0
 
-    results_df.to_csv(args.output, index=False)
-    print(f"\n{len(results_df)} résultats sauvegardés dans {args.output} "
-          f"({total_s:.1f}s au total, {total_s / len(results_df):.3f}s/run en moyenne, "
+    n_new = len(params_df)
+    print(f"\n{n_new} nouveaux résultats ajoutés à {output_path} "
+          f"({total_s:.1f}s au total, {total_s / max(n_new, 1):.3f}s/run en moyenne, "
           f"n_jobs={args.n_jobs})")
 
     if args.plot:
+        # Recharge le fichier complet (et pas seulement les lignes lancées cette fois-ci) --
+        # correct que ce soit un run normal ou une reprise --resume partielle.
+        results_df = pd.read_csv(output_path)
         if args.vary_param2:
             plot_grid_heatmap(results_df, args.vary_param, args.vary_param2, args.plot)
         else:
