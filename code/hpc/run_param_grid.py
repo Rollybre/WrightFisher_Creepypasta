@@ -19,10 +19,16 @@ Usage (depuis code/hpc/) :
 
     # Reprise après interruption (grille de plusieurs heures/jours, écrite au fur et à mesure) :
     python run_param_grid.py params.csv -o results.csv --n_jobs 24 --resume
+
+    # Sauvegarder aussi la distribution de fréquences complète de chaque run (pas juste les 5
+    # métriques résumées), dans un fichier binaire séparé alligné ligne à ligne avec --output :
+    python run_param_grid.py params.csv -o results.csv --n_jobs 24 --save_distributions results_dist.bin
 """
 
 import argparse
 import csv
+import functools
+import json
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -52,10 +58,15 @@ def _to_bool(value, default=True):
     return str(value).strip().lower() in ("true", "1", "t", "yes")
 
 
-def _run_one_row(row_dict):
+def _run_one_row(row_dict, save_distribution=False):
     """Lance UN run à partir d'une ligne de la grille (passée en dict, picklable pour
     multiprocessing). Fonction top-level exprès : ProcessPoolExecutor ne peut pas envoyer une
-    closure/méthode à un worker, seulement une fonction importable par son nom de module."""
+    closure/méthode à un worker, seulement une fonction importable par son nom de module.
+
+    `save_distribution` : si True, la distribution de fréquences complète (triée décroissant,
+    longueur n_classes, cf. frequencies_from_archive) est incluse dans le dict retourné sous la
+    clé "_freq" (préfixe "_" = pas une colonne CSV normale, retirée avant l'écriture par main(),
+    cf. --save_distributions). False par défaut : aucun changement/coût par rapport à avant."""
     rng = np.random.default_rng(int(row_dict["seed"]))
 
     # .get avec défaut : reste compatible avec un params.csv généré avant l'ajout de
@@ -84,10 +95,13 @@ def _run_one_row(row_dict):
     freq, _ = frequencies_from_archive(result, n_classes=int(row_dict["n_classes"]))
     metrics = compute_diversity_metrics(freq)
     metrics["runtime_s"] = elapsed
-    return {**row_dict, **metrics}
+    out = {**row_dict, **metrics}
+    if save_distribution:
+        out["_freq"] = freq.astype(np.float32)
+    return out
 
 
-def run_grid(params_df, n_jobs=1, on_result=None):
+def run_grid(params_df, n_jobs=1, on_result=None, row_fn=_run_one_row, keep_results=True):
     """Lance un run indépendant par ligne de params_df et retourne un DataFrame de résultats.
     n_jobs > 1 : répartit les lignes sur n_jobs processus (chaque ligne étant déjà indépendante
     -- son propre rng -- il n'y a rien à coordonner entre workers, contrairement au sweep local).
@@ -95,34 +109,50 @@ def run_grid(params_df, n_jobs=1, on_result=None):
     `on_result` (optionnel) : callback appelé avec CHAQUE résultat dès qu'il est prêt (avant même
     la fin de la grille entière) -- utilisé par main() pour écrire au fur et à mesure sur disque
     (cf. --resume) plutôt que tout garder en mémoire jusqu'à la fin d'une grille pouvant durer
-    des heures/jours (risque de tout perdre si le process est tué en cours de route)."""
+    des heures/jours (risque de tout perdre si le process est tué en cours de route).
+
+    `row_fn` : fonction top-level appelée pour chaque ligne (défaut _run_one_row) -- passer par
+    exemple functools.partial(_run_one_row, save_distribution=True) pour activer les distributions
+    sans changer la signature de run_grid. Doit rester une fonction top-level picklable (pas de
+    closure) pour fonctionner avec ProcessPoolExecutor.
+
+    `keep_results` : si False, ne garde AUCUN résultat en mémoire (juste appelé via on_result puis
+    oublié) -- retourne un DataFrame vide. Indispensable sur une grille de plusieurs millions de
+    lignes (a fortiori avec save_distribution=True, qui alourdit chaque résultat de 176 floats) :
+    sans ça, le process principal accumulerait TOUT en mémoire en plus de l'écriture sur disque via
+    on_result, avec un vrai risque de saturer la RAM. main() n'a jamais besoin de la valeur de
+    retour (--plot recharge depuis le fichier de sortie) -- garder keep_results=True par défaut
+    seulement pour ne pas changer le comportement d'appelants existants (ex. benchmark.py)."""
     row_dicts = [row.to_dict() for _, row in params_df.iterrows()]
 
     if n_jobs > 1:
         # as_completed (plutôt que executor.map) : la barre avance à chaque run terminé, dans
         # l'ordre où les workers finissent (pas l'ordre de soumission) -> progression en temps réel.
-        results = [None] * len(row_dicts)
+        results = [None] * len(row_dicts) if keep_results else None
         with ProcessPoolExecutor(max_workers=n_jobs) as executor:
-            futures = {executor.submit(_run_one_row, d): i for i, d in enumerate(row_dicts)}
+            futures = {executor.submit(row_fn, d): i for i, d in enumerate(row_dicts)}
             with tqdm(total=len(futures), desc="Runs", unit="run") as pbar:
                 for future in as_completed(futures):
                     i = futures[future]
-                    results[i] = future.result()
+                    r = future.result()
+                    if keep_results:
+                        results[i] = r
                     if on_result is not None:
-                        on_result(results[i])
-                    pbar.set_postfix(gini=f"{results[i]['gini']:.3f}")
+                        on_result(r)
+                    pbar.set_postfix(gini=f"{r['gini']:.3f}")
                     pbar.update(1)
     else:
-        results = []
+        results = [] if keep_results else None
         with tqdm(row_dicts, desc="Runs", unit="run") as pbar:
             for d in pbar:
-                r = _run_one_row(d)
-                results.append(r)
+                r = row_fn(d)
+                if keep_results:
+                    results.append(r)
                 if on_result is not None:
                     on_result(r)
                 pbar.set_postfix(gini=f"{r['gini']:.3f}")
 
-    return pd.DataFrame(results)
+    return pd.DataFrame(results) if keep_results else pd.DataFrame()
 
 
 def aggregate_for_plot(results_df, vary_param,
@@ -166,6 +196,14 @@ def build_arg_parser():
                               "relance que le reste -- reprise après interruption (crash, machine "
                               "redémarrée, ssh coupé sans nohup/tmux...) sans tout refaire. Les "
                               "nouveaux résultats sont ajoutés à la suite du fichier existant.")
+    parser.add_argument('--save_distributions', default=None,
+                         help="Chemin d'un fichier binaire (ex: results_dist.bin) où sauvegarder "
+                              "la distribution de fréquences COMPLÈTE (triée décroissant, longueur "
+                              "n_classes, float32) de chaque run, en plus des 5 métriques résumées "
+                              "du CSV -- ligne i de ce fichier <-> ligne i de --output (même ordre "
+                              "d'écriture, y compris en reprise --resume). Un .meta.json à côté "
+                              "documente shape/dtype pour le recharger (np.fromfile(...).reshape("
+                              "shape)). Par défaut (omis) : rien de plus n'est sauvegardé.")
     return parser
 
 
@@ -200,26 +238,54 @@ def main():
     out_file = open(output_path, "a" if (args.resume and file_exists) else "w", newline="")
     writer = None
 
+    dist_path = Path(args.save_distributions) if args.save_distributions else None
+    dist_resuming = args.resume and dist_path is not None and dist_path.exists() and dist_path.stat().st_size > 0
+    dist_file = open(dist_path, "ab" if dist_resuming else "wb") if dist_path else None
+    n_classes_dist = int(params_df["n_classes"].iloc[0]) if len(params_df) else None
+
     def _write_incremental(row):
         nonlocal writer
+        freq = row.pop("_freq", None)
         if writer is None:
             writer = csv.DictWriter(out_file, fieldnames=list(row.keys()))
             if not (args.resume and file_exists):
                 writer.writeheader()
         writer.writerow(row)
         out_file.flush()
+        if dist_file is not None and freq is not None:
+            # Même ordre d'écriture que le CSV (complétion, pas soumission) -> ligne i ici <->
+            # ligne i du CSV, y compris à travers une reprise --resume (les lignes déjà faites
+            # restent en préfixe du fichier, inchangées ; les nouvelles s'ajoutent après, dans le
+            # même ordre relatif que les nouvelles lignes du CSV).
+            dist_file.write(np.asarray(freq, dtype=np.float32).tobytes())
+            dist_file.flush()
+
+    row_fn = functools.partial(_run_one_row, save_distribution=dist_path is not None)
 
     t0 = time.perf_counter()
     try:
-        run_grid(params_df, n_jobs=args.n_jobs, on_result=_write_incremental)
+        run_grid(params_df, n_jobs=args.n_jobs, on_result=_write_incremental, row_fn=row_fn, keep_results=False)
     finally:
         out_file.close()
+        if dist_file is not None:
+            dist_file.close()
     total_s = time.perf_counter() - t0
 
     n_new = len(params_df)
     print(f"\n{n_new} nouveaux résultats ajoutés à {output_path} "
           f"({total_s:.1f}s au total, {total_s / max(n_new, 1):.3f}s/run en moyenne, "
           f"n_jobs={args.n_jobs})")
+
+    if dist_path is not None:
+        n_rows_total = sum(1 for _ in open(output_path)) - 1  # -1 pour le header
+        meta = {"shape": [n_rows_total, n_classes_dist], "dtype": "float32",
+                "order_note": "ligne i <-> ligne i de " + str(output_path) + " (même ordre d'écriture)"}
+        meta_path = dist_path.with_suffix(dist_path.suffix + ".meta.json")
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=2)
+        print(f"Distributions sauvegardées : {dist_path} ({meta['shape']}, float32) -- "
+              f"recharger avec np.fromfile('{dist_path}', dtype=np.float32).reshape({meta['shape']})")
+        print(f"Métadonnées : {meta_path}")
 
     if args.plot:
         # Recharge le fichier complet (et pas seulement les lignes lancées cette fois-ci) --
