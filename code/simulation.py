@@ -86,7 +86,12 @@ def summarize_empirical_data(df, emp_freq_all, n_top):
 # MÉTRIQUES DE DIVERSITÉ
 # ============================================================================
 def gini(x):
-    """Indice de Gini (0 = parfaitement égal, 1 = totalement inégal) calculé sur un vecteur de fréquences."""
+    """Indice de Gini (0 = parfaitement égal, 1 = totalement inégal) calculé sur un vecteur de fréquences.
+    Cas limite : x totalement nul (ex. archive_rate si proche de 0 -> archive cumulative vide,
+    aucune classe échantillonnée) -> Gini non défini, retourne nan plutôt que de laisser numpy
+    lever un RuntimeWarning sur une division 0/0."""
+    if np.mean(x) == 0:
+        return np.nan
     total = 0
     for i, xi in enumerate(x[:-1], 1):
         total += np.sum(np.abs(xi - x[i:]))
@@ -108,7 +113,10 @@ def hill_number(x, order):
     # (convention numpy) fausserait la richesse pour order=0 en comptant des catégories absentes.
     x = x[x > 0]
     if x.size == 0:
-        raise ValueError("hill_number: aucune fréquence strictement positive dans x")
+        # Cas limite légitime (ex. archive_rate proche de 0 -> archive cumulative jamais
+        # peuplée) plutôt qu'une erreur d'appel -> diversité non définie, nan (pas de raise :
+        # ça ferait planter tout un run_param_grid.py sur une seule ligne de grille dégénérée).
+        return np.nan
     x_prop = x/x.sum()
 
     if order == 1 :
