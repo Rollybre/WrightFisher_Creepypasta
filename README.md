@@ -4,16 +4,6 @@ Simulation d'une archive de classes (tags) qui grossit de `n_i` à `n_f` individ
 
 Un tour d'horizon illustré (modèle, implémentation, validation, résultats) : [`notebooks/topo_modele.ipynb`](notebooks/topo_modele.ipynb). L'analyse détaillée et les interprétations : [`notebooks/results.ipynb`](notebooks/results.ipynb).
 
-## Installation
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt            # numpy, pandas, scipy, matplotlib, seaborn (+ jupyter pour les notebooks)
-python -m unittest discover -s tests -t .  # 30 tests, ~12 s
-```
-
-Pas de package à installer : les modules (`simulation.py`, `run_grid.py`, `analysis.py`) sont à la racine ; les scripts et les notebooks ajoutent eux-mêmes la racine du dépôt au `sys.path`.
-
 ## Utilisation
 
 ```bash
@@ -75,18 +65,6 @@ growth_sizes(76, 30_901, 600, "empirical")      # tailles de l'archive à chaque
 
 Le profil est commun à tous les runs d'une grille et mémorisé dans `grid_config.json` (reprise avec un autre profil refusée ; les grilles antérieures sont linéaires). Pour rejouer un run d'une grille `empirical`, passer le même `growth=` à `Simulation`. Le profil linéaire est strictement inchangé : les grilles existantes se rejouent à l'identique.
 
-### Sur un serveur
-
-```bash
-rsync -av simulation.py run_grid.py serveur:CultureLab_v2/
-ssh serveur
-cd CultureLab_v2 && tmux new -s grille
-python3 run_grid.py --n_sims 5000000 --n_jobs 16 --out_dir ~/grid_n30901 --fix n_f 30901 --range mu 0 0.02 2>&1 | tee ~/grid_n30901.log
-# Ctrl-b puis d pour détacher ; relancer la même commande pour reprendre après une interruption
-```
-
-Le gain de parallélisme plafonne (≈ ×8 à 24 processus sur un CPU hybride) : `python scripts/benchmark.py` le mesure sur la machine cible.
-
 ## Résultats (non versionnés)
 
 Les blocs sont volumineux et ne sont pas dans git (`results/` est ignoré). Les notebooks les attendent dans :
@@ -95,14 +73,6 @@ Les blocs sont volumineux et ne sont pas dans git (`results/` est ignoré). Les 
 results/grid_n10000/chunks/chunk_*.npz     # n_f = 10 000
 results/grid_n30901/chunks/chunk_*.npz     # n_f = 30 901
 ```
-
-Pour les rapatrier depuis un serveur :
-
-```bash
-mkdir -p results/grid_n30901/chunks
-rsync -a --include='chunk_*.npz' --include='grid_config.json' --exclude='*' serveur:grid_n30901/ results/grid_n30901/chunks/
-```
-
 ```python
 from run_grid import load_results, load_counts
 from analysis import Explorer
