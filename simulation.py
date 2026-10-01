@@ -38,6 +38,7 @@ TODO :
 
 import argparse
 import csv
+import functools
 import os
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
@@ -233,6 +234,78 @@ def compute_metrics(counts):
 
 
 # ============================================================================
+# CROISSANCE DE L'ARCHIVE
+# ============================================================================
+GROWTHS = ("linear", "empirical")
+
+# Nombre d'occurrences de catégories déposées chaque semaine dans le corpus (708 semaines, du 2010-08-08 au
+# 2024-02-25 ; somme = 30 901). Recalculé depuis data/fandom_data.csv par scripts/empirical_counts.py.
+EMPIRICAL_WEEKLY_ADDITIONS = (
+    73, 91, 344, 17, 16, 9, 4, 26, 40, 11, 4, 0, 3, 275, 25, 20, 13, 39, 34, 56, 9, 49,
+    29, 23, 42, 22, 18, 16, 52, 28, 61, 33, 129, 238, 71, 8, 31, 189, 70, 31, 12, 16, 30, 16,
+    29, 40, 38, 94, 40, 54, 32, 35, 41, 37, 31, 60, 60, 59, 20, 28, 35, 18, 43, 48, 49, 59,
+    42, 63, 39, 40, 84, 41, 40, 94, 63, 35, 67, 82, 63, 28, 64, 74, 96, 90, 86, 116, 199, 121,
+    189, 124, 72, 186, 94, 149, 74, 89, 65, 91, 92, 70, 87, 91, 51, 67, 40, 75, 81, 59, 40, 40,
+    50, 65, 66, 92, 65, 76, 87, 78, 101, 67, 104, 78, 115, 83, 67, 107, 165, 82, 94, 77, 80, 106,
+    72, 127, 83, 107, 98, 60, 77, 132, 115, 64, 118, 82, 97, 111, 79, 84, 104, 68, 85, 75, 56, 100,
+    114, 80, 118, 82, 123, 108, 122, 81, 76, 76, 96, 139, 132, 133, 209, 137, 95, 104, 99, 102, 153, 73,
+    56, 50, 82, 67, 89, 58, 33, 45, 75, 65, 80, 99, 69, 72, 69, 57, 77, 65, 62, 64, 93, 76,
+    104, 120, 120, 108, 115, 120, 106, 78, 90, 96, 107, 120, 110, 107, 142, 82, 41, 89, 106, 96, 46, 47,
+    58, 66, 47, 34, 61, 66, 26, 20, 39, 58, 62, 45, 81, 86, 56, 112, 59, 106, 68, 73, 56, 64,
+    73, 93, 83, 84, 59, 74, 66, 65, 69, 95, 72, 63, 108, 61, 132, 119, 62, 48, 53, 55, 60, 68,
+    54, 40, 34, 23, 30, 17, 49, 31, 24, 33, 32, 10, 22, 11, 6, 18, 41, 19, 25, 20, 38, 34,
+    20, 20, 27, 39, 8, 11, 16, 32, 19, 22, 30, 16, 20, 26, 28, 25, 20, 18, 25, 21, 14, 20,
+    18, 18, 28, 20, 9, 15, 18, 11, 17, 15, 14, 32, 33, 21, 8, 15, 28, 19, 24, 24, 19, 18,
+    28, 29, 40, 51, 20, 24, 19, 21, 24, 40, 52, 34, 20, 28, 35, 46, 32, 12, 39, 17, 22, 9,
+    24, 18, 14, 19, 45, 22, 12, 37, 21, 28, 18, 12, 21, 58, 25, 69, 27, 55, 36, 57, 75, 95,
+    99, 38, 34, 69, 20, 29, 20, 21, 41, 26, 44, 38, 12, 76, 39, 43, 11, 15, 31, 70, 36, 38,
+    29, 31, 19, 41, 40, 45, 61, 76, 62, 55, 38, 54, 49, 50, 67, 112, 54, 60, 68, 47, 31, 65,
+    70, 95, 26, 77, 43, 40, 36, 31, 48, 45, 42, 29, 13, 41, 17, 16, 17, 22, 11, 42, 28, 15,
+    2, 12, 16, 6, 22, 20, 16, 15, 10, 6, 6, 11, 8, 15, 7, 14, 21, 27, 16, 31, 63, 28,
+    26, 19, 32, 21, 8, 13, 16, 22, 21, 21, 11, 10, 25, 11, 37, 25, 16, 6, 19, 20, 30, 4,
+    25, 25, 20, 27, 20, 21, 19, 5, 5, 23, 26, 23, 21, 43, 11, 10, 22, 10, 19, 16, 25, 38,
+    47, 33, 52, 59, 29, 57, 26, 36, 33, 26, 30, 23, 18, 24, 16, 22, 30, 43, 32, 15, 21, 24,
+    17, 33, 19, 23, 32, 22, 34, 36, 34, 25, 24, 20, 23, 26, 11, 26, 16, 15, 12, 27, 21, 19,
+    17, 30, 25, 35, 26, 26, 19, 12, 43, 34, 21, 47, 32, 4, 34, 8, 20, 12, 11, 6, 27, 5,
+    7, 15, 12, 11, 28, 10, 18, 6, 30, 25, 15, 37, 44, 17, 58, 14, 10, 29, 15, 35, 39, 36,
+    15, 20, 12, 25, 18, 16, 23, 13, 33, 18, 26, 11, 20, 10, 8, 17, 20, 22, 37, 11, 11, 15,
+    15, 10, 20, 4, 12, 0, 7, 4, 2, 7, 5, 6, 8, 10, 46, 30, 13, 19, 15, 15, 12, 9,
+    18, 27, 18, 64, 35, 17, 12, 8, 15, 3, 16, 6, 11, 7, 9, 9, 11, 12, 13, 14, 20, 17,
+    26, 25, 15, 34, 24, 0, 20, 9, 17, 19, 15, 12, 13, 14, 19, 17, 15, 26, 19, 9, 23, 34,
+    77, 9, 6, 7, 13, 25, 10, 9, 73, 9, 13, 16, 15, 30, 14, 23, 8, 8, 10, 5, 5, 0,
+    17, 12, 3, 7,
+)
+_weekly = np.asarray(EMPIRICAL_WEEKLY_ADDITIONS, dtype=float)
+_EMP_U = np.arange(len(_weekly) + 1) / len(_weekly)                      # temps normalisé [0, 1]
+_EMP_F = np.r_[0.0, np.cumsum(_weekly)] / _weekly.sum()                  # part cumulée des occurrences déposées
+
+
+def growth_sizes(n_i, n_f, T, growth="linear"):
+    """
+    Taille de l'archive après chaque génération t = 0..T (tableau d'entiers de longueur T + 1 ; sizes[0] = n_i,
+    sizes[T] = n_f). Les ajouts par génération sont n_t = np.diff(sizes).
+
+    - "linear"    : croissance linéaire, n_t constant (à l'arrondi près).
+    - "empirical" : croissance suivant la répartition empirique des dépôts dans le temps : la part cumulée
+                    d'occurrences F(u) du corpus (résolution hebdomadaire, interpolée linéairement) à l'instant
+                    normalisé u = t / T, soit sizes[t] = n_i + (n_f - n_i) * F(t / T). T reste libre (nombre de
+                    générations) : la forme de la croissance est celle des données (rapide en 2012-2015, lente
+                    après 2016), pas son échelle de temps.
+
+    Paramètres :
+    - n_i, n_f : taille initiale et finale de l'archive (n_f >= n_i)
+    - T        : nombre de générations
+    - growth   : "linear" ou "empirical"
+    """
+    if growth == "linear":
+        return np.rint(np.linspace(n_i, n_f, T + 1)).astype(np.int64)
+    if growth == "empirical":
+        F = np.interp(np.linspace(0.0, 1.0, T + 1), _EMP_U, _EMP_F)
+        return np.rint(n_i + (n_f - n_i) * F).astype(np.int64)
+    raise ValueError(f"growth doit valoir {GROWTHS}, reçu {growth!r}")
+
+
+# ============================================================================
 # SIMULATION
 # ============================================================================
 class Simulation:
@@ -247,9 +320,11 @@ class Simulation:
     Déroulé de `run` :
     1. Population initiale : n_i individus répartis sur C classes selon une loi de puissance
        (probabilité ∝ rang^-alpha), tirage multinomial. Elle constitue l'ARCHIVE de départ.
-    2. À chaque génération t (T au total), n_t individus sont ajoutés à l'archive, avec
+    2. À chaque génération t (T au total), n_t individus sont ajoutés à l'archive. Avec growth="linear",
        n_t ≈ (n_f - n_i) / T (arrondi par cumul : la taille de l'archive après la génération t est
-       round(n_i + (n_f - n_i) * t / T), donc exactement n_f à la fin) :
+       round(n_i + (n_f - n_i) * t / T)) ; avec growth="empirical", les ajouts suivent la répartition
+       empirique des dépôts dans le temps (cf. `growth_sizes`). Dans les deux cas l'archive contient
+       exactement n_f individus à la fin :
        - k ~ Binomial(n_t, mu) innovateurs : chacun crée sa propre nouvelle classe (compte 1) ;
        - les n_t - k autres copient une classe existante, tirée avec une probabilité ∝ archive[c]**q
          (tirage multinomial sur les classes déjà présentes) ;
@@ -269,6 +344,8 @@ class Simulation:
               0 = uniforme sur les classes existantes)
     - seed  : graine du générateur aléatoire (np.random.default_rng) pour la reproductibilité ;
               None = non reproductible
+    - growth : profil de croissance de l'archive : "linear" (défaut, n_t constant) ou "empirical" (ajouts
+               suivant la répartition empirique des dépôts, cf. `growth_sizes`)
 
     Attributs (None avant `run`) :
     - archive : np.ndarray d'entiers, comptes cumulés par classe dans l'archive finale
@@ -279,9 +356,11 @@ class Simulation:
                 l'indice t = archive après la génération t
     """
 
-    def __init__(self, n_i, n_f, C, T, alpha, mu, q, seed=None):
+    def __init__(self, n_i, n_f, C, T, alpha, mu, q, seed=None, growth="linear"):
+        if growth not in GROWTHS:
+            raise ValueError(f"growth doit valoir {GROWTHS}, reçu {growth!r}")
         self.n_i, self.n_f, self.C, self.T = n_i, n_f, C, T
-        self.alpha, self.mu, self.q, self.seed = alpha, mu, q, seed
+        self.alpha, self.mu, self.q, self.seed, self.growth = alpha, mu, q, seed, growth
         self.archive = None
         self.metrics = None
         self.history = None
@@ -305,10 +384,10 @@ class Simulation:
         probs_class = ranks ** -self.alpha
         probs_class /= probs_class.sum()
 
-        # Tailles de génération : l'archive passe linéairement de n_i à n_f (n_f exactement à la fin)
+        # Tailles de génération : l'archive passe de n_i à n_f (n_f exactement à la fin) selon le profil `growth`
         if self.n_f < self.n_i:
             raise ValueError(f"n_f ({self.n_f}) doit être >= n_i ({self.n_i})")
-        n_t = np.diff(np.rint(np.linspace(self.n_i, self.n_f, T + 1)).astype(np.int64))
+        n_t = np.diff(growth_sizes(self.n_i, self.n_f, T, self.growth))
         n_inno = rng.binomial(n_t, self.mu)
 
         # ARCHIVE : vecteur de comptes par classe (pré-alloué : C classes initiales + 1 par innovateur)
@@ -356,7 +435,7 @@ class Simulation:
         return self
 
 
-def simulation(n_i, n_f, C, T, alpha, mu, q, seed=None):
+def simulation(n_i, n_f, C, T, alpha, mu, q, seed=None, growth="linear"):
     """
     Raccourci fonctionnel autour de `Simulation` : construit, exécute, et renvoie (archive, metrics).
     Voir la docstring de `Simulation` pour la signification des paramètres.
@@ -365,7 +444,7 @@ def simulation(n_i, n_f, C, T, alpha, mu, q, seed=None):
     - final   : np.ndarray d'entiers, comptes cumulés par classe dans l'archive finale
     - metrics : dict {"gini", "gini_obs", "hill_0", "hill_1", "hill_2", "hill_inf", "chao1", "n_classes", "kl_emp"}
     """
-    sim = Simulation(n_i, n_f, C, T, alpha, mu, q, seed).run()
+    sim = Simulation(n_i, n_f, C, T, alpha, mu, q, seed, growth).run()
     return sim.archive, sim.metrics
 
 
@@ -426,13 +505,13 @@ def generate_param_table(n_sims, rng_seed=0, seed_start=1):
     return rows
 
 
-def _run_row(row):
+def _run_row(row, growth="linear"):
     """Exécute une ligne de paramètres et renvoie {paramètres + métriques} (fonction de module : picklable pour les workers)."""
-    _, metrics = simulation(**row)
+    _, metrics = simulation(**row, growth=growth)
     return {**row, **metrics}
 
 
-def run_param_table(rows, n_jobs=1):
+def run_param_table(rows, n_jobs=1, growth="linear"):
     """
     Exécute une simulation par ligne de `rows` (cf. `generate_param_table`).
 
@@ -442,6 +521,7 @@ def run_param_table(rows, n_jobs=1):
                -1 = tous les cœurs (os.cpu_count()). Ce sont des processus et non des threads :
                la simulation est du calcul CPU numpy/Python, les threads seraient bridés par le GIL.
                Chaque ligne porte sa propre graine, donc le résultat ne dépend pas de n_jobs.
+    - growth : profil de croissance de l'archive pour toutes les lignes ("linear" ou "empirical")
 
     Retour : liste de dicts {paramètres de la ligne + métriques}, dans l'ordre de `rows`.
     """
@@ -450,11 +530,11 @@ def run_param_table(rows, n_jobs=1):
     if n_jobs < 1:
         raise ValueError(f"n_jobs doit être >= 1 ou -1, reçu {n_jobs}")
     if n_jobs == 1 or len(rows) <= 1:
-        return [_run_row(row) for row in rows]
+        return [_run_row(row, growth) for row in rows]
 
     with ProcessPoolExecutor(max_workers=min(n_jobs, len(rows))) as pool:
         # map conserve l'ordre ; chunksize limite le coût de communication sur les grosses tables
-        return list(pool.map(_run_row, rows, chunksize=max(1, len(rows) // (n_jobs * 4))))
+        return list(pool.map(functools.partial(_run_row, growth=growth), rows, chunksize=max(1, len(rows) // (n_jobs * 4))))
 
 
 def write_csv(rows, path):
@@ -520,7 +600,7 @@ def main():
     Point d'entrée en ligne de commande, deux modes :
 
     1. Simulation unique (défaut) : affiche les métriques (une ligne `métrique: valeur`).
-       Requiert --C, --T, --mu, --q ; optionnels : --n_i, --n_f, --alpha, --seed.
+       Requiert --C, --T, --mu, --q ; optionnels : --n_i, --n_f, --alpha, --seed, --growth.
        --plot CHEMIN.png : conserve l'évolution de l'archive et sauvegarde la figure
        (`plot_simulation`).
            python simulation.py --C 50 --T 100 --mu 0.01 --q 1 --seed 0 --plot run.png
@@ -545,6 +625,9 @@ def main():
     parser.add_argument("--q", type=float, help="biais de conformité")
     parser.add_argument("--seed", type=int, default=None,
                         help="graine aléatoire (mode table : graine de la 1ère ligne, défaut 1)")
+    parser.add_argument("--growth", choices=GROWTHS, default="linear",
+                        help="profil de croissance de l'archive : linear (n_t constant, défaut) ou empirical "
+                             "(ajouts suivant la répartition empirique des dépôts dans le temps)")
     parser.add_argument("--plot", metavar="CHEMIN", default=None,
                         help="sauvegarde la figure (rang-fréquence + métriques vs génération), simulation unique")
     parser.add_argument("--n_sims", type=int, default=None, help="mode table : nombre de simulations à générer")
@@ -567,7 +650,7 @@ def main():
             print(f"{len(rows)} lignes de paramètres écrites dans {out}")
         else:
             out = args.output or "results.csv"
-            write_csv(run_param_table(rows, n_jobs=args.n_jobs), out)
+            write_csv(run_param_table(rows, n_jobs=args.n_jobs, growth=args.growth), out)
             print(f"{len(rows)} simulations exécutées, résultats dans {out}")
         return
 
@@ -578,7 +661,7 @@ def main():
     if args.hpc:
         parser.error("--hpc nécessite --n_sims")
 
-    sim = Simulation(args.n_i, args.n_f, args.C, args.T, args.alpha, args.mu, args.q, seed=args.seed)
+    sim = Simulation(args.n_i, args.n_f, args.C, args.T, args.alpha, args.mu, args.q, seed=args.seed, growth=args.growth)
     sim.run(track_history=bool(args.plot))
     for k, v in sim.metrics.items():
         print(f"{k}: {v}")

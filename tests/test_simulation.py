@@ -3,8 +3,8 @@ import unittest
 
 import numpy as np
 
-from simulation import (EMPIRICAL_COUNTS, Simulation, chao1, compute_metrics, draw_params,
-                                   generate_param_table, gini, hill_number, kl_divergence)
+from simulation import (EMPIRICAL_COUNTS, GROWTHS, Simulation, chao1, compute_metrics, draw_params,
+                        generate_param_table, gini, growth_sizes, hill_number, kl_divergence)
 
 P = dict(n_i=50, n_f=5000, C=40, T=100, alpha=1.0, mu=0.01, q=0.8)
 
@@ -94,6 +94,41 @@ class TestParamTable(unittest.TestCase):
     def test_table_deterministic(self):
         self.assertEqual(generate_param_table(20, rng_seed=3, seed_start=7), generate_param_table(20, rng_seed=3, seed_start=7))
         self.assertEqual([r["seed"] for r in generate_param_table(3, seed_start=7)], [7, 8, 9])
+
+
+
+class TestGrowth(unittest.TestCase):
+    def test_linear_is_unchanged(self):
+        for n_i, n_f, T in [(1, 3000, 300), (76, 30901, 600), (100, 10000, 777)]:
+            old = np.rint(np.linspace(n_i, n_f, T + 1)).astype(np.int64)      # ancien calcul (grilles déjà produites)
+            self.assertTrue(np.array_equal(growth_sizes(n_i, n_f, T, "linear"), old))
+
+    def test_empirical_profile(self):
+        for n_i, n_f, T in [(1, 3000, 300), (76, 30901, 600), (100, 10000, 1000)]:
+            sz = growth_sizes(n_i, n_f, T, "empirical")
+            self.assertEqual((sz[0], sz[-1], len(sz)), (n_i, n_f, T + 1))
+            self.assertTrue((np.diff(sz) >= 0).all())
+            lin = growth_sizes(n_i, n_f, T, "linear")
+            self.assertGreater(sz[int(0.37 * T)], lin[int(0.37 * T)] + 0.1 * (n_f - n_i))   # croissance rapide au début (2012-2015)
+
+    def test_simulation_final_size_with_empirical_growth(self):
+        for T in (300, 600, 1000):
+            sim = Simulation(50, 8000, 40, T, 1.0, 0.01, 0.8, seed=2, growth="empirical").run()
+            self.assertEqual(int(sim.archive.sum()), 8000)
+
+    def test_growth_changes_the_run_and_is_reproducible(self):
+        a = Simulation(**P, seed=4, growth="empirical").run().archive
+        b = Simulation(**P, seed=4, growth="empirical").run().archive
+        c = Simulation(**P, seed=4, growth="linear").run().archive
+        self.assertTrue(np.array_equal(a, b))
+        self.assertFalse(len(a) == len(c) and np.array_equal(a, c))
+
+    def test_invalid_growth_raises(self):
+        with self.assertRaises(ValueError):
+            Simulation(**P, growth="exponential")
+        with self.assertRaises(ValueError):
+            growth_sizes(1, 10, 5, "exponential")
+        self.assertEqual(set(GROWTHS), {"linear", "empirical"})
 
 
 if __name__ == "__main__":

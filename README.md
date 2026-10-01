@@ -9,7 +9,7 @@ Un tour d'horizon illustré (modèle, implémentation, validation, résultats) :
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt            # numpy, pandas, scipy, matplotlib, seaborn (+ jupyter pour les notebooks)
-python -m unittest discover -s tests -t .  # 22 tests, ~10 s
+python -m unittest discover -s tests -t .  # 30 tests, ~12 s
 ```
 
 Pas de package à installer : les modules (`simulation.py`, `run_grid.py`, `analysis.py`) sont à la racine ; les scripts et les notebooks ajoutent eux-mêmes la racine du dépôt au `sys.path`.
@@ -60,6 +60,21 @@ python run_grid.py --n_sims 5000000 --n_jobs 16 --out_dir results/grid_n30901/ch
 
 Ordres de grandeur (CPU du serveur) : 5 M de runs en 60 min (16 processus, `n_f` = 10 000) et 71 min (20 processus, `n_f` = 30 901) ; ≈ 650 Mo et ≈ 850 Mo de blocs.
 
+### Profil de croissance de l'archive
+
+Par défaut (`--growth linear`) la taille de l'archive croît linéairement de `n_i` à `n_f` : même nombre d'ajouts `n_t` à chaque génération. Avec `--growth empirical`, les ajouts suivent la **répartition empirique des dépôts dans le temps** : la part cumulée d'occurrences du corpus (résolution hebdomadaire, `simulation.EMPIRICAL_WEEKLY_ADDITIONS`) est lue à l'instant normalisé `t / T`. `T` reste libre (nombre de générations) : on reprend la *forme* de la croissance (rapide en 2012-2015, lente après 2016), pas son échelle de temps. L'archive finit toujours à `n_f`.
+
+```bash
+python simulation.py --C 100 --T 600 --mu 0.007 --q 0.73 --n_f 30901 --growth empirical
+python run_grid.py --n_sims 1000000 --n_jobs 16 --out_dir results/grid_n30901_emp/chunks --fix n_f 30901 --range mu 0 0.02 --growth empirical
+```
+```python
+Simulation(n_i=76, n_f=30_901, C=110, T=600, alpha=1.78, mu=0.0068, q=0.73, growth="empirical").run()
+growth_sizes(76, 30_901, 600, "empirical")      # tailles de l'archive à chaque génération (np.diff = n_t)
+```
+
+Le profil est commun à tous les runs d'une grille et mémorisé dans `grid_config.json` (reprise avec un autre profil refusée ; les grilles antérieures sont linéaires). Pour rejouer un run d'une grille `empirical`, passer le même `growth=` à `Simulation`. Le profil linéaire est strictement inchangé : les grilles existantes se rejouent à l'identique.
+
 ### Sur un serveur
 
 ```bash
@@ -105,9 +120,9 @@ simulation.py     # modèle (Simulation), indices, kl_divergence, tirage de para
 run_grid.py       # grilles par blocs, reprise, garde-fou de configuration, relecture (load_results, load_counts)
 analysis.py       # Explorer (pair plot, détail d'un indice, meilleurs runs), ajustement MLE de loi de puissance
 requirements.txt
-scripts/          # benchmark.py (scaling), empirical_counts.py (recalcule les comptes empiriques), ecdf_empirical.py
-notebooks/        # topo_modele.ipynb (présentation illustrée), results.ipynb (analyse et interprétations)
-tests/            # 22 tests (modèle, indices, données, grille en sous-processus)
+scripts/          # benchmark.py (scaling), empirical_counts.py (recalcule comptes et dépôts hebdomadaires empiriques), ecdf_empirical.py
+notebooks/        # topo_modele.ipynb (présentation illustrée), results.ipynb (analyse et interprétations), ecdf_empirical.ipynb (dates empiriques, croissance)
+tests/            # 30 tests (modèle, indices, croissance, données, grille en sous-processus)
 data/             # corpus empirique (fandom_data.csv, fandom_links.csv)
 results/          # (ignoré par git) blocs de simulation
 ```

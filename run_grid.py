@@ -31,6 +31,8 @@ Usage (depuis la racine du repo) :
     # bornes surchargées (n_f = taille réelle des données, mu rééchelonné) : la configuration est mémorisée
     # dans <out_dir>/grid_config.json et vérifiée à chaque reprise
     python run_grid.py --n_sims 1000000 --n_jobs 16 --out_dir grid_30k --fix n_f 30901 --range mu 0 0.02 --merge
+    # croissance de l'archive suivant la répartition empirique des dépôts (au lieu de n_t constant) :
+    python run_grid.py --n_sims 1000000 --n_jobs 16 --out_dir grid_30k_emp --fix n_f 30901 --range mu 0 0.02 --growth empirical
     # test rapide : python run_grid.py --n_sims 2000 --chunk_size 500 --n_jobs 4 --out_dir /tmp/g
 
     # Lecture :
@@ -48,7 +50,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 
-from simulation import (FIXED_PARAMS, FLOAT_RANGES, INT_RANGES, PARAM_COLUMNS, Simulation, compute_metrics,
+from simulation import (FIXED_PARAMS, FLOAT_RANGES, GROWTHS, INT_RANGES, PARAM_COLUMNS, Simulation, compute_metrics,
                            draw_params, kl_divergence)
 
 METRIC_KEYS = ["gini", "hill_0", "hill_1", "hill_2", "hill_inf", "chao1", "n_classes", "kl_emp", "gini_obs"]
@@ -73,13 +75,14 @@ def abundance_histogram(counts):
     return values.astype(np.uint32), mult.astype(np.uint16)
 
 
-def run_chunk(chunk_id, chunk_size, n_sims, out_dir, rng_seed, seed_start, space=None):
+def run_chunk(chunk_id, chunk_size, n_sims, out_dir, rng_seed, seed_start, space=None, growth="linear"):
     """
     Traite un bloc de lignes : tire les paramètres, exécute les simulations, écrit
     <out_dir>/chunk_<id>.npz (via un .tmp renommé). Sans effet si le fichier existe déjà.
 
     `space` : dict {float_ranges, int_ranges, fixed} définissant l'espace de tirage (cf. `build_space`) ;
-    None = bornes par défaut de simulation.py.
+    None = bornes par défaut de simulation.py. `growth` : profil de croissance de l'archive ("linear" ou
+    "empirical", cf. simulation.growth_sizes), commun à tous les runs de la grille.
 
     Retour : (chunk_id, nombre de simulations exécutées, durée en s).
     """
@@ -98,7 +101,7 @@ def run_chunk(chunk_id, chunk_size, n_sims, out_dir, rng_seed, seed_start, space
     abund, mult = [], []
     for i in range(n):
         args = {k: params[k][i].item() for k in SIM_ARGS}
-        sim = Simulation(**args, seed=int(params["seed"][i])).run()
+        sim = Simulation(**args, seed=int(params["seed"][i]), growth=growth).run()
         for k in METRIC_KEYS:
             metrics[k][i] = sim.metrics[k]
         values, m = abundance_histogram(sim.archive)
@@ -178,7 +181,8 @@ def check_config(out_dir, config):
     if os.path.exists(path):
         with open(path) as f:
             old = json.load(f)
-        diff = {k: (old.get(k), config.get(k)) for k in config if old.get(k) != config.get(k)}
+        defaults = {"growth": "linear"}            # clés absentes des configurations écrites avant leur ajout
+        diff = {k: (old.get(k, defaults.get(k)), config.get(k)) for k in config if old.get(k, defaults.get(k)) != config.get(k)}
         if diff:
             raise SystemExit(f"{out_dir} contient déjà une grille avec une autre configuration (ancien, nouveau) : {diff}\n"
                              "Utiliser un autre --out_dir, ou les mêmes options pour reprendre.")
@@ -296,6 +300,9 @@ def main():
                         help="remplace les bornes d'un paramètre tiré au hasard (répétable), ex. --range mu 0 0.02")
     parser.add_argument("--fix", nargs=2, action="append", default=[], metavar=("NOM", "VALEUR"),
                         help="fixe un paramètre à une constante (répétable), ex. --fix n_f 30901")
+    parser.add_argument("--growth", choices=GROWTHS, default="linear",
+                        help="profil de croissance de l'archive : linear (n_t constant, défaut) ou empirical "
+                             "(ajouts suivant la répartition empirique des dépôts dans le temps)")
     parser.add_argument("--upgrade", action="store_true",
                         help="ajoute aux blocs existants de --out_dir les métriques manquantes (ex. kl_emp), recalculées "
                              "depuis les distributions stockées, puis quitte (aucune simulation)")
@@ -316,7 +323,7 @@ def main():
     except ValueError as e:
         parser.error(str(e))
     check_config(args.out_dir, {"rng_seed": args.rng_seed, "seed_start": args.seed_start,
-                                "chunk_size": args.chunk_size, **space})
+                                "chunk_size": args.chunk_size, "growth": args.growth, **space})
     print("espace de tirage :", json.dumps(space), flush=True)
     n_chunks = -(-args.n_sims // args.chunk_size)
     for f in os.listdir(args.out_dir):        # blocs interrompus : fichiers temporaires orphelins
@@ -332,7 +339,7 @@ def main():
     if todo:
         with ProcessPoolExecutor(max_workers=min(n_jobs, len(todo))) as pool:
             futures = [pool.submit(run_chunk, c, args.chunk_size, args.n_sims, args.out_dir,
-                                   args.rng_seed, args.seed_start, space) for c in todo]
+                                   args.rng_seed, args.seed_start, space, args.growth) for c in todo]
             try:
                 for k, fut in enumerate(as_completed(futures), 1):
                     _, n, _ = fut.result()

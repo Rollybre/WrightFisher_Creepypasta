@@ -93,6 +93,37 @@ class TestGrid(unittest.TestCase):
                 self.assertIn("m_kl_emp", z.files)
             self.assertEqual(upgrade_chunks(str(out), 1), 0)
 
+    def test_empirical_growth_grid(self):
+        with tempfile.TemporaryDirectory() as t:
+            out = Path(t) / "g4"
+            self.assertEqual(run_grid(out, "--growth", "empirical", n_sims=500, chunk_size=250).returncode, 0)
+            with open(out / "grid_config.json") as f:
+                self.assertEqual(json.load(f)["growth"], "empirical")
+            res = load_results(out)
+            i = 123
+            counts = load_counts(out, i, 250)
+            self.assertEqual(int(counts.sum()), 10000)
+            sim = Simulation(int(res["n_i"][i]), int(res["n_f"][i]), int(res["C"][i]), int(res["T"][i]), float(res["alpha"][i]),
+                             float(res["mu"][i]), float(res["q"][i]), int(res["seed"][i]), growth="empirical").run()
+            self.assertTrue(np.array_equal(np.sort(sim.archive)[::-1], counts))          # rejeu avec le profil de croissance
+            self.assertEqual(run_grid(out, "--growth", "empirical", n_sims=500, chunk_size=250).returncode, 0)   # reprise
+            r = run_grid(out, n_sims=500, chunk_size=250)                                  # autre croissance : refusé
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("autre configuration", r.stdout + r.stderr)
+
+    def test_old_config_without_growth_key_is_linear(self):
+        with tempfile.TemporaryDirectory() as t:
+            out = Path(t) / "g5"
+            self.assertEqual(run_grid(out, n_sims=250, chunk_size=250).returncode, 0)
+            cfg_path = out / "grid_config.json"
+            with open(cfg_path) as f:
+                cfg = json.load(f)
+            cfg.pop("growth")                                                # configuration écrite avant l'ajout de growth
+            with open(cfg_path, "w") as f:
+                json.dump(cfg, f)
+            self.assertEqual(run_grid(out, n_sims=250, chunk_size=250).returncode, 0)      # reprise en linéaire : accepté
+            self.assertNotEqual(run_grid(out, "--growth", "empirical", n_sims=250, chunk_size=250).returncode, 0)
+
     def test_merge_csv_exact_parameters(self):
         out_csv = Path(self.tmp.name) / "r.csv"
         merge_csv(str(self.dir), str(out_csv))
