@@ -1,4 +1,4 @@
-# CultureLab : modèle de transmission culturelle avec archive cumulative
+# NoLongerWrightFisher (NLWF) : Modèle de transmission culturelle avec archive cumulative
 
 Simulation d'une **archive de classes (tags)** qui grossit de `n_i` à `n_f` individus en `T` générations : à chaque génération une fraction `mu` des nouveaux individus crée une nouvelle classe, les autres copient une classe de l'archive avec une probabilité proportionnelle à `effectif^q` (`q` < 1 : avantage aux classes rares, `q` > 1 : conformisme). Le dépôt contient le modèle, un exécuteur de grandes grilles (millions de runs, parallèle, reprenable) et les outils pour comparer les résultats à un corpus empirique (176 catégories, 30 901 occurrences).
 
