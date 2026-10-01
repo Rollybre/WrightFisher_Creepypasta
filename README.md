@@ -1,6 +1,6 @@
 # NoLongerWrightFisher (NLWF) : Modèle de transmission culturelle avec archive cumulative
 
-Simulation d'une **archive de classes (tags)** qui grossit de `n_i` à `n_f` individus en `T` générations : à chaque génération une fraction `mu` des nouveaux individus crée une nouvelle classe, les autres copient une classe de l'archive avec une probabilité proportionnelle à `effectif^q` (`q` < 1 : avantage aux classes rares, `q` > 1 : conformisme). Le dépôt contient le modèle, un exécuteur de grandes grilles (millions de runs, parallèle, reprenable) et les outils pour comparer les résultats à un corpus empirique (176 catégories, 30 901 occurrences).
+Simulation d'une archive de classes (tags) qui grossit de `n_i` à `n_f` individus en `T` générations : à chaque génération une fraction `mu` des nouveaux individus crée une nouvelle classe, les autres copient une classe de l'archive avec une probabilité proportionnelle à `effectif^q` (`q` < 1 : avantage aux classes rares, `q` > 1 : conformisme). Le dépôt contient le modèle, un exécuteur de grandes grilles (millions de runs, parallèle, reprenable) et les outils pour comparer les résultats à un corpus empirique (176 catégories, 30 901 occurrences).
 
 Un tour d'horizon illustré (modèle, implémentation, validation, résultats) : [`notebooks/topo_modele.ipynb`](notebooks/topo_modele.ipynb). L'analyse détaillée et les interprétations : [`notebooks/results.ipynb`](notebooks/results.ipynb).
 
@@ -62,7 +62,7 @@ Ordres de grandeur (CPU du serveur) : 5 M de runs en 60 min (16 processus, `n_f`
 
 ### Profil de croissance de l'archive
 
-Par défaut (`--growth linear`) la taille de l'archive croît linéairement de `n_i` à `n_f` : même nombre d'ajouts `n_t` à chaque génération. Avec `--growth empirical`, les ajouts suivent la **répartition empirique des dépôts dans le temps** : la part cumulée d'occurrences du corpus (résolution hebdomadaire, `simulation.EMPIRICAL_WEEKLY_ADDITIONS`) est lue à l'instant normalisé `t / T`. `T` reste libre (nombre de générations) : on reprend la *forme* de la croissance (rapide en 2012-2015, lente après 2016), pas son échelle de temps. L'archive finit toujours à `n_f`.
+Par défaut (`--growth linear`) la taille de l'archive croît linéairement de `n_i` à `n_f` : même nombre d'ajouts `n_t` à chaque génération. Avec `--growth empirical`, les ajouts suivent la répartition empirique des dépôts dans le temps : la part cumulée d'occurrences du corpus (résolution hebdomadaire, `simulation.EMPIRICAL_WEEKLY_ADDITIONS`) est lue à l'instant normalisé `t / T`. On reprend la forme de la croissance (rapide en 2012-2015, lente après 2016) et `T` garde son rôle de nombre de générations. L'archive finit toujours à `n_f`.
 
 ```bash
 python simulation.py --C 100 --T 600 --mu 0.007 --q 0.73 --n_f 30901 --growth empirical
@@ -136,3 +136,10 @@ results/          # (ignoré par git) blocs de simulation
 ## Données et historique
 
 `data/` contient le corpus empirique utilisé (histoires de la wiki Creepypasta, Fandom) : à ne pas diffuser publiquement sans en avoir vérifié la licence. L'ancienne implémentation (modèle Wright-Fisher à taux d'archivage, sans innovation) est dans le dépôt `Rollybre/WrightFisher_Creepypasta`.
+
+## En cours / À faire
+
+- [] Simulation avec la progression empirique
+- [] Importer la distribution de tag par BERTopic pour comparer 
+- [] Lancer des simulations pour balayer les paramèerts sur la nouvelle disitrbution
+- [] Incorporer le multitagging
