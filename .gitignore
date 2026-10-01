@@ -1,0 +1,13 @@
+# Résultats de simulation (volumineux, régénérables ou à rapatrier du serveur : cf. README)
+results/
+*.npz
+# Python / Jupyter / macOS
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.ipynb_checkpoints/
+.DS_Store
+.venv/
+venv/
