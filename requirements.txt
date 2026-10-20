@@ -1,0 +1,5 @@
+numpy>=1.26
+tqdm>=4.60
+# Analyse seulement (scripts/metriques_distribution.py, scripts/empirical_metrics.py) ; inutile pour lancer une grille
+pandas
+scipy

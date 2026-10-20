@@ -1,0 +1,21 @@
+# Résultats de simulation (volumineux, régénérables ou à rapatrier du serveur : cf. README)
+results/
+*.npz
+*.log
+logs/
+# Notebooks d'analyse locaux (sorties lourdes) ; simulation_moderation.ipynb est versionné
+result.ipynb
+.ipynb_checkpoints/
+# Python / macOS
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+venv/
+# Notes de session locales
+.claude/
+# Jobs Myriad (sorties SGE)
+*.o[0-9]*
+*.e[0-9]*
+*.po[0-9]*
+*.pe[0-9]*
