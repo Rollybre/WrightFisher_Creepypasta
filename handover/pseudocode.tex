@@ -78,16 +78,7 @@
 
 \subsection{Frequencies}
 
-Frequencies are computed \emph{synchronously}, once per generation, over all
-individuals created so far (no death, uniform memory, $\tau = \infty$):
-\begin{equation}
-  f_{k,t} \;=\; \frac{\sum_{i \in \mathcal{P}_t} \mathbb{1}[k \in \mathbf{x}_i]}
-                     {\sum_{i \in \mathcal{P}_t} |\mathbf{x}_i|},
-  \qquad k = 1,\dots,C_t,
-  \label{eq:freq}
-\end{equation}
-where $\mathcal{P}_t$ is the set of all individuals existing at the start of
-generation $t$.
+Frequencies of each tag are counted by calcualted how many stories used them.
 
 \subsection{Conformist copying}
 
