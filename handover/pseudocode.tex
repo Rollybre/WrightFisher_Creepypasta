@@ -84,13 +84,13 @@ Frequencies of each tag are counted by calcualted how many stories used them.
 
 Write equation of tag selection based on q, tag rank, tag frequency at previous generation
 
-\subsection{Number of tags}
+\subsection{Number of tags}: to choose how many tag a story will receive we use a truncated poisson  (ie redraw until all draw are above 1). 
 
 \begin{equation}
   m_i \;\sim\; \Pois(\lambda) \quad \text{truncated to } m_i \ge 1
   \label{eq:ntags}
 \end{equation}
-$\lambda$ is set to 2.05 after maximum likely fit to the empirical distribution (figure?)
+$\lambda$ is set to 2.05 after maximum likelyhood fit to the empirical distribution (is that right? we could add a figure here?)
 
 % ---------------------------------------------------------------------------
 \section{Pseudo-code}
