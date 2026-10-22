@@ -1,0 +1,144 @@
+\documentclass[11pt,a4paper]{article}
+
+% ---------------------------------------------------------------------------
+% Preamble
+% ---------------------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}        % switch to [french] if needed
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}              % nice tables
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}  % pseudo-code
+\usepackage{hyperref}
+
+% Shorthands
+\newcommand{\Pois}{\mathrm{Poisson}}
+\newcommand{\Unif}{\mathrm{Uniform}}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\SetKwInput{KwParams}{Parameters}
+\SetKwComment{Comment}{$\triangleright$ }{}
+
+\title{Multi-tag conformist Wright--Fisher model\\
+       \large Parameters, pseudo-code and equations}
+\author{}
+\date{\today}
+
+% ---------------------------------------------------------------------------
+% Choix de modèle actés
+% ---------------------------------------------------------------------------
+% - Chaque individu porte un ensemble de tags (classes), nb_tags ~ Poisson tronquée.
+% - f = fréquence relative de chaque classe PARMI LES TAGS (bincount sur tous
+%   les tags concaténés, minlength = C).
+% - Mise à jour SYNCHRONE : f est calculé une fois par génération sur TOUS les
+%   individus existants (cumulatif, pas de mort -> mémoire uniforme, tau = inf).
+% - Q : un q par RANG de tag (1er tag -> Q[0], 2e -> Q[1], ...), tiré une fois
+%   par simulation, commun à toute la population. Rang > len(Q) -> Q[-1].
+% - Tirage rang par rang, sans remise :
+%     1. avec proba mu : création d'une classe nouvelle (C += 1)
+%     2. sinon copie conformiste : w_k = f_k ** q_r, classes déjà choisies -> 0,
+%        renormalisation, tirage d'UNE classe
+%   Si tous les poids restants sont nuls (épuisement) : on n'ajoute plus de tag.
+%   (Exclure puis élever à la puissance == l'inverse : on part toujours du f d'origine.)
+
+\begin{document}
+\maketitle
+
+% ---------------------------------------------------------------------------
+\section{Notation and parameters}
+% ---------------------------------------------------------------------------
+
+\begin{table}[h]
+  \centering
+  \caption{Model parameters and state variables.}
+  \label{tab:params}
+  \begin{tabularx}{\linewidth}{@{} l X l @{}}
+    \toprule
+    Symbol & Description & Value / prior \\
+    \midrule
+    \multicolumn{3}{@{}l}{\emph{Fixed by the data}} \\
+    $T$        & Number of generations (time steps)                       & -- \\
+    $n_t$      & Number of new individuals (stories) at generation $t$    & empirical \\
+    $C_0$      & Initial number of classes (tags)                          & -- \\
+    $\mu$      & Innovation rate: probability that a tag slot is filled with a brand-new class & $\Unif(\cdot,\cdot)$ \\
+    $\lambda$  & Mean of the (truncated) Poisson number of tags per individual & $\Unif(\cdot,\cdot)$ \\
+    $q_r$      & Conformity exponent for the tag of rank $r$ ($r = 1,\dots,R$); ranks $r > R$ use $q_R$ & $\Unif(\cdot,\cdot)$ \\
+    $C_t$      & Number of distinct classes at generation $t$             & -- \\
+    $f_{k,t}$  & Relative frequency of class $k$ among all tags of all individuals up to $t$ & -- \\
+    $\mathbf{x}_i$ & Set of tags carried by individual $i$                & -- \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+% ---------------------------------------------------------------------------
+\section{Model}
+% ---------------------------------------------------------------------------
+
+\subsection{Frequencies}
+
+Frequencies are computed \emph{synchronously}, once per generation, over all
+individuals created so far (no death, uniform memory, $\tau = \infty$):
+\begin{equation}
+  f_{k,t} \;=\; \frac{\sum_{i \in \mathcal{P}_t} \mathbb{1}[k \in \mathbf{x}_i]}
+                     {\sum_{i \in \mathcal{P}_t} |\mathbf{x}_i|},
+  \qquad k = 1,\dots,C_t,
+  \label{eq:freq}
+\end{equation}
+where $\mathcal{P}_t$ is the set of all individuals existing at the start of
+generation $t$.
+
+\subsection{Conformist copying}
+
+Write equation of tag selection based on q, tag rank, tag frequency at previous generation
+
+\subsection{Number of tags}
+
+\begin{equation}
+  m_i \;\sim\; \Pois(\lambda) \quad \text{truncated to } m_i \ge 1
+  \label{eq:ntags}
+\end{equation}
+$\lambda$ is set to 2.05 after maximum likely fit to the empirical distribution (figure?)
+
+% ---------------------------------------------------------------------------
+\section{Pseudo-code}
+% ---------------------------------------------------------------------------
+
+\begin{algorithm}[h]
+  \caption{One simulation run.}
+  \label{alg:sim}
+  \KwParams{$\mu$, $\lambda$, $\mathbf{q} = (q_1,\dots,q_R)$, $C_0$,n}
+  \KwOut{Vector of tags  $\{\mathbf{x}_i\}$ for all individuals}
+  Initialise population $N_i$ with $C \leftarrow C_0$ classes\;
+  \For{$t = 1$ \KwTo $T$}{
+    Compute frequency of tag $f_x$ based on actual population\;
+    $n_t = \text{popgrwoth}(t)$\;
+    \For{$i = 1$ \KwTo $n_t$}{ \Comment[*]{for the new generation}
+      Draw $m_i \sim \Pois(\lambda)$ truncated to $m_i \ge 1$\;
+      $S \leftarrow \emptyset$\;
+      \For{$r = 1$ \KwTo $m_i$}{
+          $q \leftarrow q_{\min(r,R)}$ \;
+          Compute weight of all tag usiq $q_r$ and $f$\;
+          \lIf{$\sum_k w_k = 0$}{\textbf{break}}
+          select a tag $k \sim w$; $S \leftarrow S \cup \{k\}$ \Comment*[r]{conformist copy}
+      }
+      $C' \leftarrow \text{GenerateNewTags}(n_t,t)$\Comment*[r]{innovation}
+      Randomly add the $C'$ tag to $C'$ existing stories\;
+      $\mathbf{x}_i \leftarrow S$\;
+    }
+    $\mathcal{P}_t \leftarrow \mathcal{P}_{t-1} \cup \{\mathbf{x}_1,\dots,\mathbf{x}_{n_t}\}$\;
+  }
+\end{algorithm}
+
+
+% ---------------------------------------------------------------------------
+\section{Summary statistics and inference}
+% ---------------------------------------------------------------------------
+
+% TODO: list the summary statistics used for ABC and the rejection scheme.
+\paragraph{Hill numbres}:
+%hill euqation etc\dots
+\paragraph{Turnover rate}:
+
+\end{document}
