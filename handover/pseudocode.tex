@@ -114,7 +114,7 @@ $\lambda$ is set to 2.05 after maximum likely fit to the empirical distribution 
   \For{$t = 1$ \KwTo $T$}{
     Compute frequency of tag $f_x$ based on actual population\;
     $n_t = \text{popgrwoth}(t)$\;
-    \For{$i = 1$ \KwTo $n_t$}{ \Comment[*]{for the new generation}
+    \For{$i = 1$ \KwTo $n_t$}{ 
       Draw $m_i \sim \Pois(\lambda)$ truncated to $m_i \ge 1$\;
       $S \leftarrow \emptyset$\;
       \For{$r = 1$ \KwTo $m_i$}{
